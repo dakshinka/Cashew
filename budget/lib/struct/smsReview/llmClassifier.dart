@@ -91,6 +91,18 @@ Output ONLY valid JSON matching this schema:
 
   /// Classify using configured AI model (Gemini free, local Ollama, or edge fallback)
   static Future<LlmClassificationResult?> classify(String rawMessage) async {
+    // 0. Pre-filter informational notices, e-mandates, or non-transactions
+    if (SmsParser.isInformationalOrFutureNotice(rawMessage)) {
+      return LlmClassificationResult(
+        isTransaction: false,
+        transactionType: "information",
+        amount: 0,
+        currency: "₹",
+        merchant: "",
+        category: "Other",
+      );
+    }
+
     final provider = appStateSettings["aiProvider"]?.toString() ?? "none";
 
     if (provider == "gemini") {
@@ -205,19 +217,13 @@ Output ONLY valid JSON matching this schema:
       final merchant = data["merchant"]?.toString() ?? "";
       final category = data["category"]?.toString() ?? "Other";
       String? accountHint = data["accountHint"]?.toString().trim();
-      if (rawMessage != null &&
-          (accountHint == null ||
-              accountHint.isEmpty ||
-              (amount > 0 &&
-                  (accountHint.endsWith(" ${amount.toInt()}") ||
-                      accountHint
-                          .endsWith(" ${amount.toStringAsFixed(0)}"))))) {
-        final fallbackHint =
-            SmsParser.extractAccountHint(rawMessage, amount: amount);
-        if (fallbackHint != null && fallbackHint.isNotEmpty) {
-          accountHint = fallbackHint;
-        }
+      final regexHint = (rawMessage != null)
+          ? SmsParser.extractAccountHint(rawMessage, amount: amount)
+          : null;
+      if (regexHint != null && regexHint.isNotEmpty) {
+        accountHint = regexHint;
       }
+
       final confidence = (data["confidence"] is num)
           ? (data["confidence"] as num).toDouble()
           : 0.95;

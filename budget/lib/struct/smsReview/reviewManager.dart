@@ -45,9 +45,12 @@ class ReviewManager {
           final tx = ReviewTransaction.fromJson(item as Map<String, dynamic>);
           // Self-heal pending items: drop non-transactions (like e-mandates) and re-extract correct account hints
           if (tx.status == ReviewStatus.pending && tx.rawMessage.isNotEmpty) {
+            if (SmsParser.isInformationalOrFutureNotice(tx.rawMessage)) {
+              // Discard future e-mandates, scheduled notices, and non-transactions
+              continue;
+            }
             final parsed = SmsParser.parse(tx.rawMessage);
             if (!parsed.success || parsed.amount <= 0) {
-              // It is an informational alert or e-mandate notice, not a completed transaction
               continue;
             }
             if ((tx.amount - parsed.amount).abs() > 0.01) {
@@ -58,7 +61,12 @@ class ReviewManager {
             if (clean.isNotEmpty && clean != "Other") {
               tx.cleanMerchant = clean;
             }
-            if (parsed.accountHint != null && parsed.accountHint!.isNotEmpty) {
+            final fixedHint =
+                SmsParser.extractAccountHint(tx.rawMessage, amount: tx.amount);
+            if (fixedHint != null && fixedHint.isNotEmpty) {
+              tx.accountHint = canonicalizeAccountName(fixedHint);
+            } else if (parsed.accountHint != null &&
+                parsed.accountHint!.isNotEmpty) {
               tx.accountHint = canonicalizeAccountName(parsed.accountHint!);
             }
           }
@@ -105,6 +113,10 @@ class ReviewManager {
   /// Process an incoming raw message string (SMS, WhatsApp, Push Notification)
   Future<ReviewTransaction?> processRawMessage(String rawMessage, {DateTime? overrideDate}) async {
     final provider = appStateSettings["aiProvider"]?.toString() ?? "none";
+    if (SmsParser.isInformationalOrFutureNotice(rawMessage)) {
+      return null;
+    }
+
     ReviewTransaction? reviewItem;
     DateTime? effectiveDate = overrideDate;
 
@@ -159,6 +171,20 @@ class ReviewManager {
                 item.date.difference(effectiveDate!).inMinutes.abs() < 5)));
 
     if (isDuplicate) return null;
+
+    // Check against existing database transactions
+    try {
+      final allTxns = await database.allTransactions;
+      final start = effectiveDate!.subtract(const Duration(days: 1));
+      final end = effectiveDate!.add(const Duration(days: 1));
+      final alreadyInDb = allTxns.any((t) =>
+          t.dateCreated.isAfter(start) &&
+          t.dateCreated.isBefore(end) &&
+          (t.amount.abs() - reviewItem!.amount.abs()).abs() < 0.01 &&
+          (t.name.toLowerCase() == reviewItem.cleanMerchant.toLowerCase() ||
+              (t.note != null && t.note!.contains(rawMessage.trim()))));
+      if (alreadyInDb) return null;
+    } catch (_) {}
 
     // Normalize hint to canonical form and match existing wallet
     if (reviewItem.accountHint != null && reviewItem.accountHint!.isNotEmpty) {
@@ -228,6 +254,24 @@ class ReviewManager {
       // Amount: negative for expense, positive for income
       double finalAmount =
           item.isIncome ? item.amount.abs() : -item.amount.abs();
+
+      // Prevent duplicate insertion if transaction is already in database
+      try {
+        final allTxns = await database.allTransactions;
+        final start = item.date.subtract(const Duration(days: 1));
+        final end = item.date.add(const Duration(days: 1));
+        final alreadyLogged = allTxns.any((t) =>
+            t.dateCreated.isAfter(start) &&
+            t.dateCreated.isBefore(end) &&
+            (t.amount.abs() - item.amount.abs()).abs() < 0.01 &&
+            (t.name.toLowerCase() == item.cleanMerchant.toLowerCase() ||
+                (t.note != null && t.note!.contains(item.rawMessage.trim()))));
+        if (alreadyLogged) {
+          item.status = ReviewStatus.approved;
+          await saveToStorage();
+          return true;
+        }
+      } catch (_) {}
 
       final newTransaction = Transaction(
         transactionPk: _uuid.v4(),
@@ -353,7 +397,7 @@ class ReviewManager {
     // Detect Bank
     String? bank;
     final bankRegex = RegExp(
-      r'\b(HDFC|SBI|State\s+Bank\s+of\s+India|ICICI|Axis|Kotak|PNB|Punjab\s+National\s+Bank|Canara|Bank\s+of\s+Baroda|BOB|IDFC|IndusInd|Yes\s+Bank|YES|Federal\s+Bank|Standard\s+Chartered|Citi(?:bank)?|HSBC|RBL|Union\s+Bank|Indian\s+Bank|BOI|Bank\s+of\s+India|Central\s+Bank|IOB|Indian\s+Overseas\s+Bank|UCO|South\s+Indian\s+Bank|Karur\s+Vysya|KVB|DBS|AU|Bandhan|Paytm\s+Payments\s+Bank|Airtel\s+(?:Payments\s+)?Bank)\b',
+      r'\b(HDFC|SBI|State\s+Bank\s+of\s+India|ICICI|Axis|Kotak|PNB|Punjab\s+National\s+Bank|Canara|Bank\s+of\s+Baroda|BOB|IDFC|IndusInd|Yes\s+Bank|YES|Federal\s+Bank|Standard\s+Chartered|Citi(?:bank)?|HSBC|RBL|Union\s+Bank|Indian\s+Bank|BOI|Bank\s+of\s+India|Central\s+Bank|IOB|Indian\s+Overseas\s+Bank|UCO|South\s+Indian\s+Bank|Karur\s+Vysya|KVB|DBS|AU|Bandhan|Paytm\s+Payments\s+Bank|Airtel\s+Payments\s+Bank)\b',
       caseSensitive: false,
     );
     final bankMatch = bankRegex.firstMatch(trimmed);
@@ -389,11 +433,19 @@ class ReviewManager {
       }
     }
 
-    // Detect Card vs Account
-    final isCreditCard = lower.contains("credit") ||
-        (lower.contains("card") && !lower.contains("debit")) ||
-        RegExp(r'\bcc\b').hasMatch(lower);
-    final isDebitCard = lower.contains("debit");
+    // Detect Card vs Account: explicit A/C or account keywords always mean Bank Account, never Credit Card!
+    final hasExplicitAccount = lower.contains("a/c") ||
+        lower.contains("account") ||
+        lower.contains("acct") ||
+        lower.contains("bank a/c") ||
+        lower.contains("savings") ||
+        lower.contains("current");
+
+    final isCreditCard = !hasExplicitAccount &&
+        (lower.contains("credit") ||
+            (lower.contains("card") && !lower.contains("debit")) ||
+            RegExp(r'\bcc\b').hasMatch(lower));
+    final isDebitCard = !hasExplicitAccount && lower.contains("debit");
 
     final maskStr = digits != null ? "*$digits" : null;
 

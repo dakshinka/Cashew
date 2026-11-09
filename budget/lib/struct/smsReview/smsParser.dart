@@ -32,17 +32,17 @@ class SmsParser {
   static const String _numGroup =
       r'([0-9]{1,3}(?:[,\s][0-9]{2,3})+(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)';
 
-  /// Priority 1 regexes: Amount attached to action words (debited, paid, spent, credited)
+  /// Priority 1 regexes: Amount attached to action words (debited, paid, spent, credited, deposited, salary)
   static final List<RegExp> _actionAmountRegexes = [
     RegExp(
-        r'(?:debited\s+by|credited\s+with|debited\s+for|is\s+debited\s+by|debited|spent|paid|sent|withdrawn|transferred)\s+(?:(?:Rs\.?|INR|₹|\$|USD|EUR|€|GBP|£)\s*)?' +
+        r'(?:debited\s+by|credited\s+with|credited\s+by|credited\s+for|debited\s+for|is\s+debited\s+by|debited|spent|paid|sent|withdrawn|transferred|deposited|depoisited|credited|salary\s+of|salary\s+credited|salary\s+deposited)\s+(?:(?:Rs\.?|INR|₹|\$|USD|EUR|€|GBP|£)\s*)?' +
             _numGroup +
             r'(?:\s*\/-\s*)?',
         caseSensitive: false),
     RegExp(
         r'(?:(?:Rs\.?|INR|₹|\$|USD|EUR|€|GBP|£)\s*)' +
             _numGroup +
-            r'(?:\s*\/-\s*)?\s*(?:debited|spent|paid|sent|credited)',
+            r'(?:\s*\/-\s*)?\s*(?:debited|spent|paid|sent|credited|deposited|depoisited|received|towards\s+salary)',
         caseSensitive: false),
   ];
 
@@ -91,6 +91,7 @@ class SmsParser {
     "credited",
     "received",
     "deposited",
+    "depoisited",
     "refund",
     "salary",
     "cashback",
@@ -240,7 +241,7 @@ class SmsParser {
     // (e.g. "on RBL Bank credit card (9547)", "From HDFC Bank A/C *4340")
     String? bankName;
     final bankRegex = RegExp(
-      r'\b(HDFC(?:\s+Bank)?|SBI|State\s+Bank\s+of\s+India|ICICI(?:\s+Bank)?|Axis(?:\s+Bank)?|Kotak(?:\s+Bank)?|PNB|Punjab\s+National\s+Bank|Canara(?:\s+Bank)?|Bank\s+of\s+Baroda|BOB|IDFC(?:\s+FIRST(?:\s+Bank)?)?|IndusInd(?:\s+Bank)?|Yes\s+Bank|YES|Federal\s+Bank|Standard\s+Chartered|Citi(?:bank)?|HSBC|RBL(?:\s+Bank)?|Union\s+Bank(?:\s+of\s+India)?|Indian\s+Bank|BOI|Bank\s+of\s+India|Central\s+Bank(?:\s+of\s+India)?|IOB|Indian\s+Overseas\s+Bank|UCO(?:\s+Bank)?|South\s+Indian\s+Bank|Karur\s+Vysya(?:\s+Bank)?|KVB|DBS(?:\s+Bank)?|AU(?:\s+Small\s+Finance\s+Bank)?|Bandhan(?:\s+Bank)?|Paytm\s+Payments\s+Bank|Airtel\s+(?:Payments\s+)?Bank)\b',
+      r'\b(HDFC(?:\s+Bank)?|SBI|State\s+Bank\s+of\s+India|ICICI(?:\s+Bank)?|Axis(?:\s+Bank)?|Kotak(?:\s+Bank)?|PNB|Punjab\s+National\s+Bank|Canara(?:\s+Bank)?|Bank\s+of\s+Baroda|BOB|IDFC(?:\s+FIRST(?:\s+Bank)?)?|IndusInd(?:\s+Bank)?|Yes\s+Bank|YES|Federal\s+Bank|Standard\s+Chartered|Citi(?:bank)?|HSBC|RBL(?:\s+Bank)?|Union\s+Bank(?:\s+of\s+India)?|Indian\s+Bank|BOI|Bank\s+of\s+India|Central\s+Bank(?:\s+of\s+India)?|IOB|Indian\s+Overseas\s+Bank|UCO(?:\s+Bank)?|South\s+Indian\s+Bank|Karur\s+Vysya(?:\s+Bank)?|KVB|DBS(?:\s+Bank)?|AU(?:\s+Small\s+Finance\s+Bank)?|Bandhan(?:\s+Bank)?|Paytm\s+Payments\s+Bank|Airtel\s+Payments\s+Bank)\b',
       caseSensitive: false,
     );
 
@@ -269,12 +270,20 @@ class SmsParser {
     }
 
     // 3. Card vs Account
-    final isCreditCard = lower.contains("credit card") ||
-        lower.contains("card ending") ||
-        lower.contains("creditcard") ||
-        RegExp(r'\bcc\b').hasMatch(lower);
-    final isDebitCard =
-        lower.contains("debit card") || lower.contains("debitcard");
+    final hasExplicitAccount = lower.contains("a/c") ||
+        lower.contains("account") ||
+        lower.contains("acct") ||
+        lower.contains("bank a/c") ||
+        lower.contains("savings") ||
+        lower.contains("current");
+
+    final isCreditCard = !hasExplicitAccount &&
+        (lower.contains("credit card") ||
+            lower.contains("card ending") ||
+            lower.contains("creditcard") ||
+            RegExp(r'\bcc\b').hasMatch(lower));
+    final isDebitCard = !hasExplicitAccount &&
+        (lower.contains("debit card") || lower.contains("debitcard"));
 
     // 4. Digits / Account Number extraction
     // Must be preceded by account or card keywords, or in parentheses after card/account, or explicitly masked.
@@ -524,6 +533,45 @@ class SmsParser {
     return true;
   }
 
+  /// Checks whether a message is an informational notice, future mandate reminder, or regulatory notification
+  static bool isInformationalOrFutureNotice(String message) {
+    final lower = message.toLowerCase();
+
+    // Future deduction / e-mandate / upcoming scheduled notices
+    if (lower.contains("e-mandate") ||
+        lower.contains("mandate") ||
+        lower.contains("will be deducted") ||
+        lower.contains("will be debited") ||
+        lower.contains("will be charged") ||
+        lower.contains("scheduled to be") ||
+        lower.contains("scheduled on") ||
+        lower.contains("scheduled for") ||
+        lower.contains("auto-debit scheduled") ||
+        lower.contains("autopay scheduled") ||
+        lower.contains("standing instruction") ||
+        lower.contains("si scheduled") ||
+        lower.contains("mandate registered") ||
+        lower.contains("e-mandate created") ||
+        lower.contains("autopay set up") ||
+        lower.contains("autopay setup")) {
+      return true;
+    }
+
+    // Check non-transaction banking alerts
+    for (final info in _informationKeywords) {
+      if (lower.contains(info)) {
+        if (!lower.contains("has been debited") &&
+            !lower.contains("is debited by") &&
+            !lower.contains("debited for rs") &&
+            !lower.contains("debited with")) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
   /// Extracts the genuine payee / merchant, handling UPI trade names and removing user salutations
   static String extractMerchant(String message, {bool isCredit = false}) {
     // 1. Strip salutations at start of message so user's greeting name is never mistaken for payee
@@ -533,7 +581,21 @@ class SmsParser {
       '',
     );
 
-    // 2. Check for UPI parenthesized trade name
+    // 2. Salary detection
+    final lowerCleaned = cleaned.toLowerCase();
+    if (lowerCleaned.contains("salary")) {
+      final salaryPatt = RegExp(
+        r'(?:by\s+salary(?:\s*[-/:]?\s*|\s+from\s+)|\bsalary\s+from\s+)([A-Za-z0-9&.\-_ ]+?)(?:\s+on\b|\s+ref\b|\s+avail\b|\s*\(|\s*\.|\s*,|\s*$)',
+        caseSensitive: false,
+      );
+      final m = salaryPatt.firstMatch(cleaned);
+      if (m != null && m.group(1) != null && _isValidMerchant(m.group(1)!)) {
+        return m.group(1)!.trim();
+      }
+      return "Salary";
+    }
+
+    // 3. Check for UPI parenthesized trade name
     // e.g. "to VPA teashop@upi (RAMESH TEA STALL)" or "to 9876543210@paytm (Chai Point)"
     final parenRegex = RegExp(
       r'(?:to|at|vpa|paid to)\s+[^,(]+\(([^)]+)\)',
@@ -547,7 +609,7 @@ class SmsParser {
       }
     }
 
-    // 3. Priority patterns for payment recipients
+    // 4. Priority patterns for payment recipients
     final patterns = [
       // "paid to <merchant>", "sent to <merchant>", "transferred to <merchant>", "trf to <merchant>"
       RegExp(r'(?:paid to|sent to|transferred to|trf to)\s+([A-Za-z0-9&.\-_ ]+?)(?:\s+on\b|\s+ref\b|\s+upi\b|\s+via\b|\s+using\b|\s+a/c\b|\s+ac\b|\s+as\b|\s+for\b|\s+from\b|\s+bal\b|\s*\(|\s*\.|\s*,|\s*$)', caseSensitive: false),
@@ -571,6 +633,10 @@ class SmsParser {
           return candidate;
         }
       }
+    }
+
+    if (isCredit && lowerCleaned.contains("salary")) {
+      return "Salary";
     }
 
     return isCredit ? "Income Transfer" : "Bank Transfer";
@@ -628,16 +694,9 @@ class SmsParser {
       return ParsedSmsResult(success: false);
     }
 
-    // 2. Strict Information & Regulatory notification check
-    for (final info in _informationKeywords) {
-      if (lower.contains(info)) {
-        if (!lower.contains("has been debited") &&
-            !lower.contains("is debited by") &&
-            !lower.contains("debited for rs") &&
-            !lower.contains("debited with")) {
-          return ParsedSmsResult(success: false);
-        }
-      }
+    // 2. Strict Information & Future Notice / E-Mandate check
+    if (isInformationalOrFutureNotice(message)) {
+      return ParsedSmsResult(success: false);
     }
 
     // 3. Strict Advertisement check

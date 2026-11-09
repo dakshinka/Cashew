@@ -6,6 +6,7 @@ import 'package:budget/colors.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/functions.dart';
 import 'package:budget/pages/addTransactionPage.dart';
+import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/settings.dart';
 import 'package:budget/struct/smsReview/reviewManager.dart';
 import 'package:budget/struct/smsReview/reviewModels.dart';
@@ -13,6 +14,7 @@ import 'package:budget/struct/smsReview/smsInboxScanner.dart';
 import 'package:budget/struct/smsReview/llmClassifier.dart';
 import 'package:budget/widgets/button.dart';
 import 'package:budget/widgets/framework/pageFramework.dart';
+import 'package:budget/widgets/framework/popupFramework.dart';
 import 'package:budget/widgets/openBottomSheet.dart';
 import 'package:budget/widgets/openPopup.dart';
 import 'package:budget/widgets/openSnackbar.dart';
@@ -1114,6 +1116,317 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
     );
   }
 
+  void _showEditAccountDialog(ReviewTransaction item) async {
+    final wallets = await database.getAllWallets();
+    final nameController = TextEditingController(text: item.accountHint ?? "");
+    String? selectedWalletPk = item.suggestedWalletPk;
+
+    openBottomSheet(
+      context,
+      popupWithKeyboard: true,
+      PopupFramework(
+        title: "Edit Account",
+        subtitle: "Choose an existing wallet or rename the account hint.",
+        child: StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextInput(
+                    labelText: "Account Name",
+                    controller: nameController,
+                    autoFocus: true,
+                    icon: Icons.account_balance_rounded,
+                    onChanged: (_) => setDialogState(() {}),
+                    padding: const EdgeInsetsDirectional.only(bottom: 12),
+                  ),
+                  if (wallets.isNotEmpty) ...[
+                    TextFont(
+                      text: "Or Link to Existing Wallet:",
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      decoration: BoxDecoration(
+                        border: Border.all(
+                            color: getColor(context, "dividerColor")),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String?>(
+                          isExpanded: true,
+                          value: selectedWalletPk,
+                          hint: const TextFont(
+                              text: "Select a wallet...", fontSize: 13),
+                          items: [
+                            const DropdownMenuItem<String?>(
+                              value: null,
+                              child: TextFont(
+                                  text: "None (Use Account Name)",
+                                  fontSize: 13),
+                            ),
+                            ...wallets.map(
+                              (w) => DropdownMenuItem<String?>(
+                                value: w.walletPk,
+                                child: TextFont(text: w.name, fontSize: 13),
+                              ),
+                            ),
+                          ],
+                          onChanged: (val) {
+                            setDialogState(() {
+                              selectedWalletPk = val;
+                              if (val != null) {
+                                final matched =
+                                    wallets.firstWhere((w) => w.walletPk == val);
+                                nameController.text = matched.name;
+                              }
+                            });
+                          },
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                  ],
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Button(
+                          label: "Cancel",
+                          color: getColor(context, "canvasContainer"),
+                          textColor: getColor(context, "black"),
+                          onTap: () => Navigator.of(dialogContext).pop(),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Button(
+                          label: "Save Account",
+                          icon: Icons.check_circle_outline,
+                          color: Theme.of(context).colorScheme.primary,
+                          textColor: Theme.of(context).colorScheme.onPrimary,
+                          onTap: () async {
+                            final newName = nameController.text.trim();
+                            if (newName.isNotEmpty) {
+                              item.accountHint =
+                                  ReviewManager.canonicalizeAccountName(newName);
+                              item.suggestedWalletPk = selectedWalletPk;
+                              await ReviewManager.instance.saveToStorage();
+                              Navigator.of(dialogContext).pop();
+                              setState(() {});
+                            }
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Future<bool> _showAccountCreationConfirmationDialog(
+      ReviewTransaction item, List<TransactionWallet> wallets) async {
+    final nameController = TextEditingController(
+      text: item.accountHint?.trim() ?? "Bank A/C",
+    );
+    String selectedCategoryPk = item.suggestedCategoryPk ?? "";
+    String selectedCategoryName = item.suggestedCategoryName;
+    String? chosenExistingWalletPk;
+    bool confirmed = false;
+
+    await openBottomSheet(
+      context,
+      popupWithKeyboard: true,
+      PopupFramework(
+        title: "Create New Account?",
+        subtitle:
+            "This account was detected from the SMS but doesn't exist yet in your wallets.",
+        child: StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextInput(
+                    labelText: "Account Name",
+                    controller: nameController,
+                    autoFocus: true,
+                    icon: Icons.account_balance_rounded,
+                    onChanged: (_) => setDialogState(() {}),
+                    padding: const EdgeInsetsDirectional.only(bottom: 12),
+                  ),
+                  TextFont(
+                    text: "Category:",
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  const SizedBox(height: 6),
+                  InkWell(
+                    onTap: () {
+                      openBottomSheet(
+                        context,
+                        PopupFramework(
+                          title: "Select Category",
+                          child: SizedBox(
+                            height: 320,
+                            child: SelectCategory(
+                              popRoute: true,
+                              setSelectedCategory: (cat) {
+                                if (cat != null) {
+                                  setDialogState(() {
+                                    selectedCategoryPk = cat.categoryPk;
+                                    selectedCategoryName = cat.name;
+                                  });
+                                }
+                              },
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                    borderRadius: BorderRadius.circular(10),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 12),
+                      decoration: BoxDecoration(
+                        border: Border.all(
+                            color: getColor(context, "dividerColor")),
+                        borderRadius: BorderRadius.circular(10),
+                        color: getColor(context, "canvasContainer"),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.category_rounded,
+                                size: 18,
+                                color: Theme.of(context).colorScheme.primary,
+                              ),
+                              const SizedBox(width: 8),
+                              TextFont(
+                                text: selectedCategoryName,
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ],
+                          ),
+                          TextFont(
+                            text: "Change",
+                            fontSize: 12,
+                            textColor: Theme.of(context).colorScheme.primary,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  if (wallets.isNotEmpty) ...[
+                    TextFont(
+                      text: "Or Link to Existing Wallet Instead:",
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      decoration: BoxDecoration(
+                        border: Border.all(
+                            color: getColor(context, "dividerColor")),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String?>(
+                          isExpanded: true,
+                          value: chosenExistingWalletPk,
+                          hint: const TextFont(
+                              text: "+ Create as new account", fontSize: 13),
+                          items: [
+                            const DropdownMenuItem<String?>(
+                              value: null,
+                              child: TextFont(
+                                  text: "+ Create as new account",
+                                  fontSize: 13),
+                            ),
+                            ...wallets.map(
+                              (w) => DropdownMenuItem<String?>(
+                                value: w.walletPk,
+                                child: TextFont(text: w.name, fontSize: 13),
+                              ),
+                            ),
+                          ],
+                          onChanged: (val) {
+                            setDialogState(() {
+                              chosenExistingWalletPk = val;
+                            });
+                          },
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                  ],
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Button(
+                          label: "Cancel",
+                          color: getColor(context, "canvasContainer"),
+                          textColor: getColor(context, "black"),
+                          onTap: () => Navigator.of(dialogContext).pop(),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Button(
+                          label: chosenExistingWalletPk != null
+                              ? "Link & Log"
+                              : "Confirm & Create",
+                          icon: Icons.check_circle_outline,
+                          color: Theme.of(context).colorScheme.primary,
+                          textColor: Theme.of(context).colorScheme.onPrimary,
+                          onTap: () async {
+                            final finalName = nameController.text.trim();
+                            if (finalName.isNotEmpty) {
+                              item.accountHint =
+                                  ReviewManager.canonicalizeAccountName(
+                                      finalName);
+                              item.suggestedCategoryPk = selectedCategoryPk;
+                              item.suggestedCategoryName = selectedCategoryName;
+                              item.suggestedWalletPk = chosenExistingWalletPk;
+                              confirmed = true;
+                              Navigator.of(dialogContext).pop();
+                            }
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
+
+    return confirmed;
+  }
+
   Widget _buildReviewCard(ReviewTransaction item) {
     final String currencySymbol;
     if (item.currency.isNotEmpty) {
@@ -1261,19 +1574,39 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
                     ),
                   ),
                   if (item.accountHint != null && item.accountHint!.isNotEmpty)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: getColor(context, "dividerColor")
-                            .withOpacity(0.25),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: TextFont(
-                        text: item.accountHint!,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
-                        textColor: getColor(context, "textLight"),
+                    InkWell(
+                      onTap: () => _showEditAccountDialog(item),
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: getColor(context, "dividerColor")
+                              .withOpacity(0.25),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: getColor(context, "dividerColor")
+                                .withOpacity(0.4),
+                            width: 0.8,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            TextFont(
+                              text: item.accountHint!,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                              textColor: getColor(context, "textLight"),
+                            ),
+                            const SizedBox(width: 4),
+                            Icon(
+                              Icons.edit_rounded,
+                              size: 11,
+                              color: getColor(context, "textLight"),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   if (item.isReminder)
@@ -1383,7 +1716,22 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
                         horizontal: 14, vertical: 8),
                     fontSize: 13,
                     onTap: () async {
-                      if (item.isReminder) {
+                      // 1. Check if account exists in database before creating; ask confirmation if new!
+                      final wallets = await database.getAllWallets();
+                      final hint = item.accountHint?.trim() ?? "";
+                      final matchingWallet = hint.isNotEmpty
+                          ? ReviewManager.findMatchingWallet(wallets, hint)
+                          : null;
+
+                      if (hint.isNotEmpty &&
+                          matchingWallet == null &&
+                          (item.suggestedWalletPk == null ||
+                              item.suggestedWalletPk!.isEmpty)) {
+                        final confirmed =
+                            await _showAccountCreationConfirmationDialog(
+                                item, wallets);
+                        if (!confirmed) return;
+                      } else if (item.isReminder) {
                         bool proceed = false;
                         await openPopup(
                           context,

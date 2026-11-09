@@ -132,6 +132,182 @@ class _InterestLoanWidgetState extends State<InterestLoanWidget> {
     );
   }
 
+  void _showQuickEditRateDialog(
+    InterestLoanConfig currentConfig, [
+    List<Transaction>? currentTransactions,
+    double? fallbackPrincipal,
+  ]) {
+    final rateController = TextEditingController(
+      text: currentConfig.interestRate > 0
+          ? currentConfig.interestRate.toString()
+          : "",
+    );
+    LoanInterestPeriod selectedPeriod = currentConfig.period;
+
+    openBottomSheet(
+      context,
+      popupWithKeyboard: true,
+      PopupFramework(
+        title: "Edit Interest Rate (%)",
+        subtitle:
+            "Directly adjust the loan interest percentage rate and accrual cycle.",
+        child: StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            final parsedRate =
+                double.tryParse(rateController.text.trim()) ?? 0.0;
+            final previewConfig = InterestLoanConfig(
+              objectivePk: widget.objective.objectivePk,
+              interestRate: parsedRate,
+              period: selectedPeriod,
+              startDate: currentConfig.startDate,
+              anchorDate: currentConfig.anchorDate,
+              isEnabled: true,
+            );
+
+            final previewCalc = LoanInterestCalculationResult.calculate(
+              objective: widget.objective,
+              config: previewConfig,
+              transactions: currentTransactions ?? [],
+              fallbackPrincipal: fallbackPrincipal ?? 0.0,
+            );
+
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextInput(
+                    labelText: "Interest Rate (%)",
+                    controller: rateController,
+                    autoFocus: true,
+                    icon: Icons.percent_rounded,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                      signed: false,
+                    ),
+                    onChanged: (_) => setDialogState(() {}),
+                    padding: const EdgeInsetsDirectional.only(bottom: 14),
+                  ),
+                  DropdownButtonFormField<LoanInterestPeriod>(
+                    value: selectedPeriod,
+                    decoration: const InputDecoration(
+                      labelText: "Accrual Frequency",
+                      border: OutlineInputBorder(),
+                      contentPadding:
+                          EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    ),
+                    items: const [
+                      DropdownMenuItem(
+                        value: LoanInterestPeriod.monthly,
+                        child: Text("Monthly (% per month)"),
+                      ),
+                      DropdownMenuItem(
+                        value: LoanInterestPeriod.yearly,
+                        child: Text("Annual (% per year / APR)"),
+                      ),
+                      DropdownMenuItem(
+                        value: LoanInterestPeriod.weekly,
+                        child: Text("Weekly (% per week)"),
+                      ),
+                      DropdownMenuItem(
+                        value: LoanInterestPeriod.daily,
+                        child: Text("Daily (% per day)"),
+                      ),
+                    ],
+                    onChanged: (val) {
+                      if (val != null) {
+                        setDialogState(() {
+                          selectedPeriod = val;
+                        });
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 14),
+                  if (parsedRate > 0)
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .primaryContainer
+                            .withOpacity(0.35),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .primary
+                              .withOpacity(0.3),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          TextFont(
+                            text: "Calculated Upcoming Interest:",
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            textColor: Theme.of(context).colorScheme.primary,
+                          ),
+                          const SizedBox(height: 4),
+                          TextFont(
+                            text:
+                                "${previewConfig.periodLabel} Interest: ${_formatMoney(context, previewCalc.upcomingInterestAmount)}",
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ],
+                      ),
+                    ),
+                  const SizedBox(height: 18),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Button(
+                          label: "Cancel",
+                          color: getColor(context, "canvasContainer"),
+                          textColor: getColor(context, "black"),
+                          onTap: () => Navigator.of(dialogContext).pop(),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Button(
+                          label: "Save Rate",
+                          icon: Icons.check_circle_outline,
+                          color: Theme.of(context).colorScheme.primary,
+                          textColor: Theme.of(context).colorScheme.onPrimary,
+                          onTap: () async {
+                            final rate =
+                                double.tryParse(rateController.text.trim()) ??
+                                    0.0;
+                            final newConfig = InterestLoanConfig(
+                              objectivePk: widget.objective.objectivePk,
+                              interestRate: rate,
+                              period: selectedPeriod,
+                              startDate: currentConfig.startDate,
+                              anchorDate: currentConfig.anchorDate,
+                              isEnabled: rate > 0,
+                            );
+                            await InterestLoanManager.instance.saveConfig(newConfig);
+                            Navigator.of(dialogContext).pop();
+                            if (mounted) setState(() {});
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
   void _showConfigureInterestDialog([
     List<Transaction>? currentTransactions,
     double? fallbackPrincipal,
@@ -924,15 +1100,38 @@ class _InterestLoanWidgetState extends State<InterestLoanWidget> {
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
                                         ),
-                                        TextFont(
-                                          text: config.isEnabled
-                                              ? "${config.interestRate}% ${config.perPeriodText} (${config.periodLabel})"
-                                              : "Periodic interest is disabled",
-                                          fontSize: 12,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          textColor:
-                                              getColor(context, "textLight"),
+                                        InkWell(
+                                          onTap: () => _showQuickEditRateDialog(
+                                              config,
+                                              transactions,
+                                              loanTotalFromDb),
+                                          borderRadius:
+                                              BorderRadius.circular(6),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Flexible(
+                                                child: TextFont(
+                                                  text: config.isEnabled
+                                                      ? "${config.interestRate}% ${config.perPeriodText} (${config.periodLabel})"
+                                                      : "Periodic interest is disabled",
+                                                  fontSize: 12,
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  textColor: getColor(
+                                                      context, "textLight"),
+                                                ),
+                                              ),
+                                              const SizedBox(width: 4),
+                                              Icon(
+                                                Icons.edit_rounded,
+                                                size: 13,
+                                                color: getColor(
+                                                    context, "textLight"),
+                                              ),
+                                            ],
+                                          ),
                                         ),
                                       ],
                                     ),
@@ -940,10 +1139,35 @@ class _InterestLoanWidgetState extends State<InterestLoanWidget> {
                                 ],
                               ),
                             ),
+                            OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 8, vertical: 4),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                side: BorderSide(
+                                  color: (widget.objective.income
+                                          ? getColor(context, "incomeAmount")
+                                          : getColor(context, "expenseAmount"))
+                                      .withOpacity(0.5),
+                                ),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8)),
+                              ),
+                              icon: const Icon(Icons.percent_rounded, size: 13),
+                              label: const TextFont(
+                                text: "Rate %",
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              onPressed: () => _showQuickEditRateDialog(
+                                  config, transactions, loanTotalFromDb),
+                            ),
+                            const SizedBox(width: 4),
                             IconButton(
                               icon: const Icon(Icons.tune_rounded, size: 22),
-                              onPressed: () =>
-                                  _showConfigureInterestDialog(transactions, loanTotalFromDb),
+                              onPressed: () => _showConfigureInterestDialog(
+                                  transactions, loanTotalFromDb),
                               tooltip: "Configure Interest",
                             ),
                           ],
