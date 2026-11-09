@@ -1187,6 +1187,7 @@ Future<bool> openUrl(String link) async {
 }
 
 List<String> popularCurrencies = [
+  'inr', // Indian Rupee (Default)
   'usd', // United States Dollar
   'eur', // Euro
   'jpy', // Japanese Yen
@@ -1198,7 +1199,6 @@ List<String> popularCurrencies = [
   'sek', // Swedish Krona
   'nzd', // New Zealand Dollar
   'mxn', // Mexican Peso
-  'inr', // Indian Rupee
   'nok', // Norwegian Krone
   'krw', // South Korean Won
   'btc', // Bitcoin
@@ -1219,7 +1219,7 @@ String getDevicesDefaultCurrencyCode() {
   } catch (e) {
     print("Error getting default currency " + e.toString());
   }
-  return popularCurrencies[0];
+  return 'inr';
 }
 
 void copyToClipboard(String text,

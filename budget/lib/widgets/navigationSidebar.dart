@@ -2,6 +2,12 @@ import 'package:budget/functions.dart';
 import 'package:budget/main.dart';
 import 'package:budget/pages/editCategoriesPage.dart';
 import 'package:budget/pages/exchangeRatesPage.dart';
+import 'package:budget/pages/vendorTabsPage.dart';
+import 'package:budget/pages/reviewInboxPage.dart';
+import 'package:budget/pages/statementImporterPage.dart';
+import 'package:budget/pages/cashFlowForecastPage.dart';
+import 'package:budget/pages/groupTabsPage.dart';
+import 'package:budget/pages/receiptVaultPage.dart';
 import 'package:budget/struct/defaultPreferences.dart';
 import 'package:budget/struct/navBarIconsData.dart';
 import 'package:budget/struct/settings.dart';
@@ -275,6 +281,54 @@ class NavigationSidebarState extends State<NavigationSidebar> {
                               NavigationSidebarButtonWithNavBarIconData(
                                 navBarIconDataKey: "subscriptions",
                                 currentPageIndex: selectedIndex,
+                              ),
+                              NavigationSidebarButton(
+                                icon: Icons.storefront_rounded,
+                                label: "Store Tabs & Deliveries",
+                                isSelected: false,
+                                onTap: () {
+                                  pushRoute(context, const VendorTabsPage());
+                                },
+                              ),
+                              NavigationSidebarButton(
+                                icon: Icons.mark_email_unread_rounded,
+                                label: "Review Inbox",
+                                isSelected: false,
+                                onTap: () {
+                                  pushRoute(context, const ReviewInboxPage());
+                                },
+                              ),
+                              NavigationSidebarButton(
+                                icon: Icons.receipt_long_rounded,
+                                label: "Statement Importer",
+                                isSelected: false,
+                                onTap: () {
+                                  pushRoute(context, const StatementImporterPage());
+                                },
+                              ),
+                              NavigationSidebarButton(
+                                icon: Icons.insights_rounded,
+                                label: "Cash Flow Forecaster",
+                                isSelected: false,
+                                onTap: () {
+                                  pushRoute(context, const CashFlowForecastPage());
+                                },
+                              ),
+                              NavigationSidebarButton(
+                                icon: Icons.groups_rounded,
+                                label: "Group Tabs (Splitwise)",
+                                isSelected: false,
+                                onTap: () {
+                                  pushRoute(context, const GroupTabsPage());
+                                },
+                              ),
+                              NavigationSidebarButton(
+                                icon: Icons.inventory_2_outlined,
+                                label: "Receipt & Warranty Vault",
+                                isSelected: false,
+                                onTap: () {
+                                  pushRoute(context, const ReceiptVaultPage());
+                                },
                               ),
                               NavigationSidebarButtonWithNavBarIconData(
                                 navBarIconDataKey: "scheduled",

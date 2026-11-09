@@ -28,6 +28,7 @@ import 'package:budget/pages/transactionsListPage.dart';
 import 'package:budget/pages/upcomingOverdueTransactionsPage.dart';
 import 'package:budget/pages/walletDetailsPage.dart';
 import 'package:budget/pages/creditDebtTransactionsPage.dart';
+import 'package:budget/pages/vendorTabsPage.dart';
 import 'package:budget/struct/currencyFunctions.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/defaultPreferences.dart';
@@ -911,6 +912,11 @@ class AddMoreThingsPopup extends StatelessWidget {
           openPage: AddCategoryPage(
             routesToPopAfterDelete: RoutesToPopAfterDelete.None,
           ),
+        ),
+        AddThing(
+          iconData: Icons.storefront_rounded,
+          title: "Store Tabs & Deliveries",
+          openPage: const VendorTabsPage(),
         ),
       ],
     );

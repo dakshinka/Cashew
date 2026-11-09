@@ -24,6 +24,8 @@ import 'package:budget/widgets/framework/pageFramework.dart';
 import 'package:budget/widgets/tappable.dart';
 import 'package:budget/widgets/textWidgets.dart';
 import 'package:budget/widgets/transactionEntries.dart';
+import 'package:budget/widgets/interestLoanWidget.dart';
+import 'package:budget/struct/loans/interestLoanManager.dart';
 import 'package:budget/widgets/transactionEntry/transactionEntry.dart';
 import 'package:drift/drift.dart' show Value;
 import 'package:easy_localization/easy_localization.dart';
@@ -235,6 +237,61 @@ class _ObjectivePageContentState extends State<_ObjectivePageContent> {
                       );
                     },
                   ),
+                  if (widget.objective.type == ObjectiveType.loan)
+                    DropdownItemMenu(
+                      id: "toggle-loan-polarity",
+                      label: widget.objective.income
+                          ? "Switch to Borrowed (Debt)"
+                          : "Switch to Lent (Credit)",
+                      icon: Icons.swap_horiz_rounded,
+                      action: () async {
+                        final newIncome = !widget.objective.income;
+                        final updatedObj =
+                            widget.objective.copyWith(income: newIncome);
+                        await database.createOrUpdateObjective(updatedObj);
+
+                        final txs = await database
+                            .getAllTransactionsBelongingToObjective(
+                                widget.objective.objectivePk);
+                        for (final tx in txs) {
+                          final isInitial = tx.name
+                                  .toLowerCase()
+                                  .contains("initial") ||
+                              (tx.note != null &&
+                                  tx.note!.toLowerCase().contains("initial"));
+                          if (isInitial) {
+                            final expectedIncome = !newIncome;
+                            final expectedAmount =
+                                tx.amount.abs() * (expectedIncome ? 1 : -1);
+                            await database.createOrUpdateTransaction(
+                              tx.copyWith(
+                                income: expectedIncome,
+                                amount: expectedAmount,
+                              ),
+                              insert: false,
+                            );
+                          }
+                        }
+
+                        final config = InterestLoanManager.instance
+                            .getConfig(widget.objective.objectivePk);
+                        if (config.isEnabled) {
+                          await InterestLoanManager.instance
+                              .syncUpcomingInterestTransaction(
+                            objective: updatedObj,
+                            config: config,
+                          );
+                        }
+                        InterestLoanManager.instance.notify();
+
+                        Navigator.of(context).pop();
+                        pushRoute(
+                          context,
+                          ObjectivePage(
+                              objectivePk: widget.objective.objectivePk),
+                        );
+                      },
+                    ),
                   // Only show for loan goal
                   // if (widget.objective.type == ObjectiveType.loan &&
                   //     getIsDifferenceOnlyLoan(widget.objective) == false)
@@ -573,6 +630,12 @@ class _ObjectivePageContentState extends State<_ObjectivePageContent> {
                   ),
                   sliver: SliverToBoxAdapter(
                     child: numberTransactionsWidget,
+                  ),
+                ),
+              if (widget.objective.type == ObjectiveType.loan)
+                SliverToBoxAdapter(
+                  child: InterestLoanWidget(
+                    objective: widget.objective,
                   ),
                 ),
               TransactionEntries(

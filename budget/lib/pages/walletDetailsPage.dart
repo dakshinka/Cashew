@@ -48,6 +48,7 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:budget/colors.dart';
 import 'package:budget/widgets/viewAllTransactionsButton.dart';
+import 'package:budget/widgets/creditCardWidget.dart';
 import 'package:flutter_sticky_header/flutter_sticky_header.dart';
 import 'package:provider/provider.dart';
 import 'package:budget/widgets/fab.dart';
@@ -724,6 +725,7 @@ class WalletDetailsPageState extends State<WalletDetailsPage>
                       padding: const EdgeInsetsDirectional.only(bottom: 13),
                       child: selectedTabCurrent,
                     ),
+                    CreditCardBannerWidget(wallet: widget.wallet!),
                     // TipBox(
                     //   padding: const EdgeInsetsDirectional.only(bottom: 13),
                     //   onTap: () {

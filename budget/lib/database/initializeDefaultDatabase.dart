@@ -1,3 +1,4 @@
+import 'package:drift/drift.dart' show Value;
 import 'package:budget/functions.dart';
 import 'package:budget/struct/settings.dart';
 import 'package:easy_localization/easy_localization.dart';
@@ -13,11 +14,21 @@ Future<bool> initializeDefaultDatabase() async {
     await createDefaultCategories();
   }
 
-  if ((await database.getAllWallets()).length <= 0) {
+  final existingWallets = await database.getAllWallets();
+  if (existingWallets.isEmpty) {
     await database.createOrUpdateWallet(
       defaultWallet(),
       customDateTimeModified: DateTime(0),
     );
+  } else {
+    // If the default wallet exists but has usd or null, switch to inr
+    for (final w in existingWallets) {
+      if (w.walletPk == "0" && (w.currency == "usd" || w.currency == null)) {
+        await database.createOrUpdateWallet(
+          w.copyWith(currency: Value("inr")),
+        );
+      }
+    }
   }
   return true;
 }

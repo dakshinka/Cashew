@@ -48,6 +48,7 @@ import 'package:budget/widgets/transactionEntry/transactionLabel.dart';
 import 'package:budget/widgets/util/contextMenu.dart';
 import 'package:budget/widgets/util/showDatePicker.dart';
 import 'package:budget/widgets/viewAllTransactionsButton.dart';
+import 'package:budget/struct/backupShare/backupShareManager.dart';
 import 'package:drift/drift.dart' hide Column;
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/foundation.dart';
@@ -679,7 +680,7 @@ class _AddTransactionPageState extends State<AddTransactionPage>
           : null,
       sharedOldKey:
           widget.transaction != null ? widget.transaction!.sharedOldKey : null,
-      transactionOwnerEmail: selectedPayer,
+      transactionOwnerEmail: selectedPayer ?? getCurrentUserIdentifier(),
       transactionOriginalOwnerEmail:
           removeShared == false && widget.transaction != null
               ? widget.transaction!.transactionOriginalOwnerEmail

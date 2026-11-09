@@ -4137,6 +4137,17 @@ class FinanceDatabase extends _$FinanceDatabase {
         .get();
   }
 
+  Stream<List<Transaction>> watchAllTransactionsBelongingToObjective(
+      String objectivePk) {
+    return (select(transactions)
+          ..where((tbl) {
+            return tbl.objectiveFk.equals(objectivePk) |
+                tbl.objectiveLoanFk.equals(objectivePk);
+          })
+          ..orderBy([(t) => OrderingTerm.desc(t.dateCreated)]))
+        .watch();
+  }
+
   Future<int> createOrUpdateFromSharedTransaction(Transaction transaction,
       {bool insert = false}) async {
     if (transaction.sharedKey != null) {
@@ -5636,7 +5647,10 @@ class FinanceDatabase extends _$FinanceDatabase {
         ..addColumns([totalAmt])
         ..where(transactions.objectiveLoanFk.equals(objective.objectivePk) &
             transactions.walletFk.equals(wallet.walletPk) &
-            transactions.income.equals(!objective.income));
+            transactions.income.equals(!objective.income) &
+            (transactions.note.isNull() |
+                transactions.note.like("%[Interest Payment]%").not()) &
+            transactions.name.like("%(Interest%").not());
 
       mergedStreams.add(query
           .map(((row) =>
@@ -5658,7 +5672,10 @@ class FinanceDatabase extends _$FinanceDatabase {
       query = selectOnly(transactions)
         ..addColumns([totalAmt])
         ..where((objective.type == ObjectiveType.loan
-                ? transactions.objectiveLoanFk.equals(objective.objectivePk)
+                ? (transactions.objectiveLoanFk.equals(objective.objectivePk) &
+                    (transactions.note.isNull() |
+                        transactions.note.like("%[Interest Payment]%").not()) &
+                    transactions.name.like("%(Interest%").not())
                 : transactions.objectiveFk.equals(objective.objectivePk)) &
             transactions.walletFk.equals(wallet.walletPk));
 
@@ -5683,7 +5700,10 @@ class FinanceDatabase extends _$FinanceDatabase {
         ..addColumns([totalAmt])
         ..where(
           (objectiveType == ObjectiveType.loan
-                  ? transactions.objectiveLoanFk.equals(objectivePk)
+                  ? (transactions.objectiveLoanFk.equals(objectivePk) &
+                      (transactions.note.isNull() |
+                          transactions.note.like("%[Interest Payment]%").not()) &
+                      transactions.name.like("%(Interest%").not())
                   : transactions.objectiveLoanFk.equals(objectivePk)) &
               transactions.walletFk.equals(wallet.walletPk),
         );

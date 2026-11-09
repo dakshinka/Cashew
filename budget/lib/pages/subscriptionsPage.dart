@@ -26,6 +26,7 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:budget/functions.dart';
+import 'package:budget/pages/subscriptionAuditorPage.dart';
 import 'package:budget/struct/settings.dart';
 
 class SubscriptionsPage extends StatefulWidget {
@@ -79,6 +80,13 @@ class SubscriptionsPageState extends State<SubscriptionsPage> {
         dragDownToDismiss: true,
         title: "subscriptions".tr(),
         actions: [
+          IconButton(
+            tooltip: "Subscription Auditor",
+            icon: const Icon(Icons.auto_awesome_motion_rounded),
+            onPressed: () {
+              pushRoute(context, const SubscriptionAuditorPage());
+            },
+          ),
           CustomPopupMenuButton(
             showButtons: enableDoubleColumn(context),
             keepOutFirst: true,

@@ -21,6 +21,11 @@ import 'package:budget/widgets/dropdownSelect.dart';
 import 'package:budget/widgets/exportDB.dart';
 import 'package:budget/widgets/importCSV.dart';
 import 'package:budget/widgets/exportCSV.dart';
+import 'package:budget/pages/statementImporterPage.dart';
+import 'package:budget/pages/vendorTabsPage.dart';
+import 'package:budget/pages/groupTabsPage.dart';
+import 'package:budget/pages/reviewInboxPage.dart';
+import 'package:budget/pages/cashFlowForecastPage.dart';
 import 'package:budget/pages/autoTransactionsPageEmail.dart';
 import 'package:budget/pages/activityPage.dart';
 import 'package:budget/pages/editAssociatedTitlesPage.dart';
@@ -30,6 +35,8 @@ import 'package:budget/pages/editWalletsPage.dart';
 import 'package:budget/pages/notificationsPage.dart';
 import 'package:budget/pages/subscriptionsPage.dart';
 import 'package:budget/widgets/accountAndBackup.dart';
+import 'package:budget/struct/backupShare/backupShareManager.dart';
+import 'package:budget/widgets/localSyncModal.dart';
 import 'package:budget/widgets/importDB.dart';
 import 'package:budget/widgets/navigationFramework.dart';
 import 'package:budget/widgets/notificationsSettings.dart';
@@ -290,6 +297,64 @@ class MorePages extends StatelessWidget {
                     openPage: CreditDebtTransactions(isCredit: null),
                     title: navBarIconsData["loans"]!.label.tr(),
                     icon: navBarIconsData["loans"]!.iconData,
+                    isOutlined: true,
+                  ),
+                ),
+              ],
+            ),
+          if (hasSideNavigation == false)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Expanded(
+                  child: SettingsContainerOpenPage(
+                    openPage: const VendorTabsPage(),
+                    title: "Store Tabs & Deliveries",
+                    icon: Icons.storefront_rounded,
+                    isOutlined: true,
+                  ),
+                ),
+                Expanded(
+                  child: SettingsContainerOpenPage(
+                    openPage: const GroupTabsPage(),
+                    title: "Group Tabs (Splitwise)",
+                    icon: Icons.groups_rounded,
+                    isOutlined: true,
+                  ),
+                ),
+              ],
+            ),
+          if (hasSideNavigation == false)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Expanded(
+                  child: SettingsContainerOpenPage(
+                    openPage: const StatementImporterPage(),
+                    title: "Statement Importer",
+                    icon: Icons.receipt_long_rounded,
+                    isOutlined: true,
+                  ),
+                ),
+                Expanded(
+                  child: SettingsContainerOpenPage(
+                    openPage: const ReviewInboxPage(),
+                    title: "Review Inbox",
+                    icon: Icons.mark_email_unread_rounded,
+                    isOutlined: true,
+                  ),
+                ),
+              ],
+            ),
+          if (hasSideNavigation == false)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Expanded(
+                  child: SettingsContainerOpenPage(
+                    openPage: const CashFlowForecastPage(),
+                    title: "Cash Flow Forecaster",
+                    icon: Icons.insights_rounded,
                     isOutlined: true,
                   ),
                 ),
@@ -606,11 +671,53 @@ class SettingsPageContent extends StatelessWidget {
               : Icons.ballot_rounded,
         ),
 
+        SettingsContainerOpenPage(
+          openPage: const VendorTabsPage(),
+          title: "Store Tabs & Deliveries",
+          icon: Icons.storefront_rounded,
+          description:
+              "Track local store purchases (Khata) and recurring daily deliveries.",
+        ),
+
+        SettingsContainerOpenPage(
+          openPage: const GroupTabsPage(),
+          title: "Group Tabs (Splitwise)",
+          icon: Icons.groups_rounded,
+          description:
+              "Split group expenses with friends and settle debts locally.",
+        ),
+
+        SettingsContainerOpenPage(
+          openPage: const ReviewInboxPage(),
+          title: "Review Inbox",
+          icon: Icons.mark_email_unread_rounded,
+          description:
+              "Review pending auto-detected transactions from SMS, emails, or imports.",
+        ),
+
+        SettingsContainerOpenPage(
+          openPage: const CashFlowForecastPage(),
+          title: "Cash Flow Forecaster",
+          icon: Icons.insights_rounded,
+          description:
+              "Simulate and project future cash balances based on recurring transactions.",
+        ),
+
         SettingsHeader(title: "import-and-export".tr()),
 
         ExportCSV(),
 
         ImportCSV(),
+
+        SettingsContainer(
+          onTap: () {
+            pushRoute(context, const StatementImporterPage());
+          },
+          icon: Icons.receipt_long_rounded,
+          title: "Bank Statement Importer",
+          description:
+              "Import bank statements with auto-column mapping and AI categorization.",
+        ),
 
         SettingsHeader(title: "backups".tr()),
 
@@ -618,11 +725,61 @@ class SettingsPageContent extends StatelessWidget {
 
         ImportDB(),
 
+        SettingsContainer(
+          onTap: () async {
+            await BackupShareManager.shareBackupOverWhatsAppOrEmail(context);
+          },
+          icon: Icons.share_rounded,
+          title: "Share Backup (WhatsApp / Email)",
+          description:
+              "Send your complete finance backup to yourself or family over WhatsApp or Email.",
+        ),
+
+        SettingsContainer(
+          onTap: () async {
+            await BackupShareManager.importAndCombineBackup(context);
+          },
+          icon: Icons.merge_type_rounded,
+          title: "Combine / Merge Backup",
+          description:
+              "Merge incoming backup file without losing data. Prompts for user confirmation on any duplicate.",
+        ),
+
+        LocalSyncSettingsButton(),
+
         GoogleAccountLoginButton(
           isOutlinedButton: false,
           forceButtonName: "google-drive".tr(),
         ),
+
+        SettingsHeader(title: "Data Reset"),
+
+        SettingsContainer(
+          onTap: () async {
+            await BackupShareManager.wipeAllDataWithDoubleConfirmation(context);
+          },
+          icon: Icons.delete_forever_rounded,
+          title: "Clear All Data (Reset)",
+          description:
+              "Permanently delete all test data and transactions with double confirmation.",
+        ),
       ],
+    );
+  }
+}
+
+class LocalSyncSettingsButton extends StatelessWidget {
+  const LocalSyncSettingsButton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return SettingsContainer(
+      onTap: () {
+        openLocalSyncModal(context);
+      },
+      title: "Local Wi-Fi Peer Sync",
+      description: "Direct sync between phones and desktop on same Wi-Fi (No Google Drive needed)",
+      icon: Icons.wifi_tethering_rounded,
     );
   }
 }

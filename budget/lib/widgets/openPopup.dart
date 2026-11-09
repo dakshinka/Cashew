@@ -116,9 +116,11 @@ Future<T?> openPopup<T extends Object?>(
                 borderRadius: BorderRadiusDirectional.circular(borderRadius),
                 boxShadow: boxShadowGeneral(context),
               ),
-              child: SingleChildScrollView(
-                child: Builder(builder: (context) {
-                  Widget content = Column(
+              child: Material(
+                type: MaterialType.transparency,
+                child: SingleChildScrollView(
+                  child: Builder(builder: (context) {
+                    Widget content = Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Padding(
@@ -293,6 +295,7 @@ Future<T?> openPopup<T extends Object?>(
               ),
             ),
           ),
+        ),
         ),
       );
     },

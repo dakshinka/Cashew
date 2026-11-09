@@ -31,6 +31,8 @@ import 'package:notification_listener_service/notification_event.dart';
 import 'package:notification_listener_service/notification_listener_service.dart';
 
 import 'addButton.dart';
+import 'package:budget/struct/smsReview/reviewManager.dart';
+import 'package:budget/pages/reviewInboxPage.dart';
 
 StreamSubscription<ServiceNotificationEvent>? notificationListenerSubscription;
 List<String> recentCapturedNotifications = [];
@@ -111,7 +113,23 @@ Future queueTransactionFromMessage(String messageString,
     }
   }
 
-  if (templateFound == null) return false;
+  if (templateFound == null) {
+    // Attempt AI-assisted SMS / notification parsing for Review Inbox
+    final item = await ReviewManager.instance.processRawMessage(messageString);
+    if (item != null) {
+      try {
+        openSnackbar(
+          SnackbarMessage(
+            title: "New Transaction in Review Inbox",
+            description: "${item.cleanMerchant}: ${item.amount}",
+            icon: Icons.mark_email_unread_outlined,
+          ),
+        );
+      } catch (_) {}
+      return true;
+    }
+    return false;
+  }
 
   //if (amountDouble == null) amountDouble = getAmountFromString(title ?? "");
   // We don't need this line, we can still queue up a transaction without these details,
@@ -210,6 +228,15 @@ class _AutoTransactionsPageNotificationsState
             fontSize: 14,
             maxLines: 10,
           ),
+        ),
+        SettingsContainer(
+          onTap: () {
+            pushRoute(context, const ReviewInboxPage());
+          },
+          title: "Review Inbox",
+          description:
+              "Review incoming SMS & payment transactions with AI categorization before committing to accounts.",
+          icon: Icons.mark_email_unread_rounded,
         ),
         SettingsContainerSwitch(
           onSwitched: (value) async {
@@ -536,6 +563,30 @@ Future<void> parseEmailsInBackground(context,
         if (selectedCategory == null) continue;
 
         title = filterEmailTitle(title);
+
+        final lowerMsg = messageString.toLowerCase();
+        final isReminderEmail = lowerMsg.contains("reminder") ||
+            lowerMsg.contains("bill due") ||
+            lowerMsg.contains("payment due") ||
+            lowerMsg.contains("due on") ||
+            lowerMsg.contains("due by") ||
+            lowerMsg.contains("upcoming bill");
+
+        if (isReminderEmail) {
+          await ReviewManager.instance.processRawMessage(
+            messageString,
+            overrideDate: messageDate,
+          );
+          openSnackbar(
+            SnackbarMessage(
+              title: "Reminder Email Tracked",
+              description: "$title (Check required in Review Inbox)",
+              icon: Icons.mark_email_unread_rounded,
+            ),
+          );
+          emailsParsed.insert(0, message.id!);
+          continue;
+        }
 
         await addAssociatedTitles(title, selectedCategory);
 

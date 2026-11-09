@@ -32,6 +32,7 @@ import 'package:budget/modified/reorderable_list.dart';
 import 'package:material_symbols_icons/material_symbols_icons.dart';
 import 'package:provider/provider.dart';
 import 'exchangeRatesPage.dart';
+import 'package:budget/pages/vendorTabsPage.dart';
 
 class EditWalletsPage extends StatefulWidget {
   EditWalletsPage({Key? key, this.runWhenOpen}) : super(key: key);
@@ -150,6 +151,23 @@ class _EditWalletsPageState extends State<EditWalletsPage> {
                     });
                   },
                   autoFocus: false,
+                ),
+              ),
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: AnimatedExpanded(
+              expand: hideIfSearching(searchValue, isFocused, context) == false,
+              child: Padding(
+                padding: const EdgeInsetsDirectional.symmetric(
+                    horizontal: 16, vertical: 4),
+                child: SettingsContainerOpenPage(
+                  openPage: const VendorTabsPage(),
+                  title: "Store Tabs & Deliveries",
+                  description:
+                      "Track running store tabs (Khata) and daily deliveries",
+                  icon: Icons.storefront_rounded,
+                  isOutlined: true,
                 ),
               ),
             ),

@@ -50,9 +50,12 @@ captureLogs(Function body) {
     () async {
       await body();
     },
-    (error, stackTrace) {},
+    (error, stackTrace) {
+      debugPrint("FATAL APP STARTUP ERROR: $error\n$stackTrace");
+    },
     zoneSpecification: ZoneSpecification(
       print: (Zone self, ZoneDelegate parent, Zone zone, String message) {
+        parent.print(zone, message);
         logService.log(message);
       },
     ),

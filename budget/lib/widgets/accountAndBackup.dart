@@ -27,6 +27,7 @@ import 'package:budget/widgets/settingsContainers.dart';
 import 'package:budget/widgets/tappable.dart';
 import 'package:budget/widgets/textWidgets.dart';
 import 'package:budget/widgets/util/saveFile.dart';
+import 'package:budget/widgets/localSyncModal.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -936,6 +937,15 @@ class _BackupManagementState extends State<BackupManagement> {
                       : Icons.cloud_sync_rounded,
                 )
               : SizedBox.shrink(),
+          SettingsContainer(
+            enableBorderRadius: true,
+            onTap: () {
+              openLocalSyncModal(context);
+            },
+            title: "Local Wi-Fi Peer Sync",
+            description: "Direct sync between phones and desktop on same Wi-Fi",
+            icon: Icons.wifi_tethering_rounded,
+          ),
           // Only allow sync on every change for web
           // Only on web, disabled automatically in initializeSettings if not web
           widget.isClientSync && kIsWeb

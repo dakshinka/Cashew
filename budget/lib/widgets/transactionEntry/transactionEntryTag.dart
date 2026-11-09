@@ -409,7 +409,17 @@ class SharedBudgetLabel extends StatelessWidget {
             child: Row(
               children: [
                 transaction.sharedReferenceBudgetPk == null
-                    ? SizedBox.shrink()
+                    ? (transaction.transactionOwnerEmail != null &&
+                            transaction.transactionOwnerEmail!.isNotEmpty
+                        ? Padding(
+                            padding: const EdgeInsetsDirectional.only(start: 4),
+                            child: TextFont(
+                              text: "by ${transaction.transactionOwnerEmail}",
+                              fontSize: 11,
+                              textColor: getColor(context, "textLight"),
+                            ),
+                          )
+                        : const SizedBox.shrink())
                     : Expanded(
                         child: StreamBuilder<Budget>(
                           stream: database

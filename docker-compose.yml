@@ -1,0 +1,9 @@
+services:
+  cashew-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cashew-desktop-web
+    ports:
+      - "8081:8080"
+    restart: unless-stopped

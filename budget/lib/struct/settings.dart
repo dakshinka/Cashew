@@ -76,6 +76,8 @@ Future<bool> initializeSettings() async {
   }
 
   appStateSettings = userSettings;
+  // Always enable Cashew Pro Lifetime with all features unlocked
+  appStateSettings["purchaseID"] = "cashew.pro.lifetime";
   print(
       "App settings loaded: if logging is enabled, logs will now be captured");
 

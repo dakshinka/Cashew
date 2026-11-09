@@ -264,6 +264,29 @@ class _AddObjectivePageState extends State<AddObjectivePage>
           ),
         );
       }
+    } else if (widget.objective != null &&
+        (widget.objective!.type == ObjectiveType.loan ||
+            objectiveType == ObjectiveType.loan) &&
+        isDifferenceOnlyLoan == false &&
+        widget.objective!.income != selectedIncome) {
+      // Loan polarity switched while editing
+      final txs = await database.getAllTransactionsBelongingToObjective(
+          widget.objective!.objectivePk);
+      for (final tx in txs) {
+        final isInitial = tx.name.toLowerCase().contains("initial") ||
+            (tx.note != null && tx.note!.toLowerCase().contains("initial"));
+        if (isInitial) {
+          final newIncome = !selectedIncome;
+          final newAmount = tx.amount.abs() * (newIncome ? 1 : -1);
+          await database.createOrUpdateTransaction(
+            tx.copyWith(
+              income: newIncome,
+              amount: newAmount,
+            ),
+            insert: false,
+          );
+        }
+      }
     }
     savingHapticFeedback();
     popRoute(context);
@@ -511,42 +534,64 @@ class _AddObjectivePageState extends State<AddObjectivePage>
                     child: AnimatedOpacity(
                       duration: Duration(milliseconds: 500),
                       opacity: isDifferenceOnlyLoan ? 0.5 : 1,
-                      child: IncomeExpenseTabSelector(
-                        hasBorderRadius: true,
-                        onTabChanged: (isIncome) {
-                          if (objectiveType == ObjectiveType.loan) {
-                            setSelectedIncome(!isIncome);
-                          } else {
-                            setSelectedIncome(isIncome);
-                          }
-                        },
-                        initialTabIsIncome: objectiveType == ObjectiveType.loan
-                            ? !selectedIncome
-                            : selectedIncome,
-                        syncWithInitial: true,
-                        expenseLabel: objectiveType == ObjectiveType.goal
-                            ? "expense-goal".tr()
-                            : objectiveType == ObjectiveType.loan
-                                ? "lent".tr()
-                                : "",
-                        incomeLabel: objectiveType == ObjectiveType.goal
-                            ? "savings-goal".tr()
-                            : objectiveType == ObjectiveType.loan
-                                ? "borrowed".tr()
-                                : "",
-                        showIcons: objectiveType != ObjectiveType.loan,
-                        expenseCustomIcon: objectiveType == ObjectiveType.goal
-                            ? null
-                            : Icon(
-                                getTransactionTypeIcon(
-                                    TransactionSpecialType.credit),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          IncomeExpenseTabSelector(
+                            hasBorderRadius: true,
+                            tabController: _incomeTabController,
+                            onTabChanged: (isIncome) {
+                              if (objectiveType == ObjectiveType.loan) {
+                                setSelectedIncome(!isIncome);
+                              } else {
+                                setSelectedIncome(isIncome);
+                              }
+                            },
+                            initialTabIsIncome: objectiveType == ObjectiveType.loan
+                                ? !selectedIncome
+                                : selectedIncome,
+                            syncWithInitial: true,
+                            expenseLabel: objectiveType == ObjectiveType.goal
+                                ? "expense-goal".tr()
+                                : objectiveType == ObjectiveType.loan
+                                    ? "lent".tr()
+                                    : "",
+                            incomeLabel: objectiveType == ObjectiveType.goal
+                                ? "savings-goal".tr()
+                                : objectiveType == ObjectiveType.loan
+                                    ? "borrowed".tr()
+                                    : "",
+                            showIcons: objectiveType != ObjectiveType.loan,
+                            expenseCustomIcon: objectiveType == ObjectiveType.goal
+                                ? null
+                                : Icon(
+                                    getTransactionTypeIcon(
+                                        TransactionSpecialType.credit),
+                                  ),
+                            incomeCustomIcon: objectiveType == ObjectiveType.goal
+                                ? null
+                                : Icon(
+                                    getTransactionTypeIcon(
+                                        TransactionSpecialType.debt),
+                                  ),
+                          ),
+                          if (objectiveType == ObjectiveType.loan)
+                            Padding(
+                              padding: const EdgeInsetsDirectional.only(
+                                  top: 6, start: 4, end: 4),
+                              child: TextFont(
+                                text: selectedIncome
+                                    ? "Lent: You give principal (- Expense / Red). Interest & returns are Income (Green)."
+                                    : "Borrowed: You receive principal (+ Income / Green). Interest & repayments are Expense (Red).",
+                                fontSize: 11,
+                                maxLines: 2,
+                                textAlign: TextAlign.center,
+                                textColor: selectedIncome
+                                    ? getColor(context, "incomeAmount")
+                                    : getColor(context, "expenseAmount"),
                               ),
-                        incomeCustomIcon: objectiveType == ObjectiveType.goal
-                            ? null
-                            : Icon(
-                                getTransactionTypeIcon(
-                                    TransactionSpecialType.debt),
-                              ),
+                            ),
+                        ],
                       ),
                     ),
                   ),
