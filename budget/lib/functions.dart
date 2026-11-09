@@ -1205,20 +1205,6 @@ List<String> popularCurrencies = [
 ];
 
 String getDevicesDefaultCurrencyCode() {
-  try {
-    String? currentCountryCode =
-        WidgetsBinding.instance.platformDispatcher.locale.countryCode;
-    // print(currentCountryCode);
-    for (String currencyKey in currenciesJSON.keys) {
-      if (currenciesJSON[currencyKey] != null &&
-          currenciesJSON[currencyKey]["CountryCode"] != null &&
-          currenciesJSON[currencyKey]["CountryCode"] == currentCountryCode) {
-        return currencyKey;
-      }
-    }
-  } catch (e) {
-    print("Error getting default currency " + e.toString());
-  }
   return 'inr';
 }
 

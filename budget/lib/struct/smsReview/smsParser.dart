@@ -280,22 +280,29 @@ class SmsParser {
     // Must be preceded by account or card keywords, or in parentheses after card/account, or explicitly masked.
     // Never match the transaction amount!
     final accountKeywordRegex = RegExp(
-      r'(?:a/c|ac|account|acct|acc|card)\s*(?:no\.?|number|ending(?:\s*in|\s*with)?|\s*[:.\-]*\s*)*\s*\(?([xX*]*\d{3,6})\)?',
+      r'(?:a/c|ac|account|acct|acc|card)\s*(?:no\.?|number|ending(?:\s*in|\s*with)?|\s*[:.\-]*\s*)*\s*\(?([xX*.]*\d{3,6})\)?',
       caseSensitive: false,
     );
 
     String? digits;
-    final amountInt = amount != null && amount > 0 ? amount.toInt() : null;
+    double? amt = amount;
+    if (amt == null || amt <= 0) {
+      amt = extractAmountFromText(message);
+    }
+    final amountInt = amt != null && amt > 0 ? amt.toInt() : null;
 
     final matches = accountKeywordRegex.allMatches(message);
     for (final m in matches) {
       final cand = m.group(1);
       if (cand != null && cand.isNotEmpty) {
-        final numericOnly = cand.replaceAll(RegExp(r'\D'), '');
-        if (amountInt != null && numericOnly == amountInt.toString()) {
+        final cleaned = cand.replaceAll(RegExp(r'[^\dxX*]'), '');
+        final numericOnly = cleaned.replaceAll(RegExp(r'\D'), '');
+        if (amountInt != null &&
+            (numericOnly == amountInt.toString() ||
+                (amt != null && numericOnly == amt.toStringAsFixed(0)))) {
           continue; // Skip if it collides with transaction amount
         }
-        digits = cand;
+        digits = cleaned;
         break;
       }
     }
@@ -308,7 +315,13 @@ class SmsParser {
       );
       final maskedMatch = maskedNumRegex.firstMatch(message);
       if (maskedMatch != null) {
-        digits = maskedMatch.group(1);
+        final cand = maskedMatch.group(1);
+        final numericOnly = cand?.replaceAll(RegExp(r'\D'), '') ?? '';
+        if (amountInt == null ||
+            (numericOnly != amountInt.toString() &&
+                (amt == null || numericOnly != amt.toStringAsFixed(0)))) {
+          digits = cand;
+        }
       }
     }
 

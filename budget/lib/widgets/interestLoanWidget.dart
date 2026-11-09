@@ -13,6 +13,7 @@ import 'package:budget/widgets/openBottomSheet.dart';
 import 'package:budget/widgets/openPopup.dart';
 import 'package:budget/widgets/openSnackbar.dart';
 import 'package:budget/widgets/globalSnackbar.dart';
+import 'package:budget/widgets/framework/popupFramework.dart';
 import 'package:budget/widgets/textInput.dart';
 import 'package:budget/widgets/textWidgets.dart';
 
@@ -131,7 +132,10 @@ class _InterestLoanWidgetState extends State<InterestLoanWidget> {
     );
   }
 
-  void _showConfigureInterestDialog([List<Transaction>? currentTransactions]) {
+  void _showConfigureInterestDialog([
+    List<Transaction>? currentTransactions,
+    double? fallbackPrincipal,
+  ]) {
     final currentConfig = InterestLoanManager.instance.getConfig(
       widget.objective.objectivePk,
       fallbackStartDate: widget.objective.dateCreated,
@@ -148,73 +152,57 @@ class _InterestLoanWidgetState extends State<InterestLoanWidget> {
 
     openBottomSheet(
       context,
-      StatefulBuilder(
-        builder: (dialogContext, setDialogState) {
-          final dateFormat = DateFormat('dd MMM yyyy');
-          final parsedRate =
-              double.tryParse(rateController.text.trim()) ?? 0.0;
-          final previewConfig = InterestLoanConfig(
-            objectivePk: widget.objective.objectivePk,
-            interestRate: parsedRate,
-            period: selectedPeriod,
-            startDate: currentConfig.startDate,
-            anchorDate: selectedAnchorDate,
-            isEnabled: enabled,
-          );
+      popupWithKeyboard: true,
+      PopupFramework(
+        title: "Configure Loan Interest",
+        subtitle:
+            "Track periodic interest rates and automatically calculate upcoming amounts and next due dates.",
+        child: StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            final dateFormat = DateFormat('dd MMM yyyy');
+            final parsedRate =
+                double.tryParse(rateController.text.trim()) ?? 0.0;
+            final previewConfig = InterestLoanConfig(
+              objectivePk: widget.objective.objectivePk,
+              interestRate: parsedRate,
+              period: selectedPeriod,
+              startDate: currentConfig.startDate,
+              anchorDate: selectedAnchorDate,
+              isEnabled: enabled,
+            );
 
-          final previewCalc = LoanInterestCalculationResult.calculate(
-            objective: widget.objective,
-            config: previewConfig,
-            transactions: currentTransactions ?? [],
-          );
+            final previewCalc = LoanInterestCalculationResult.calculate(
+              objective: widget.objective,
+              config: previewConfig,
+              transactions: currentTransactions ?? [],
+              fallbackPrincipal: fallbackPrincipal ?? 0.0,
+            );
 
-          String cycleNote;
-          switch (selectedPeriod) {
-            case LoanInterestPeriod.daily:
-              cycleNote = "Calculates interest every single day";
-              break;
-            case LoanInterestPeriod.weekly:
-              cycleNote =
-                  "Calculates interest weekly on every ${DateFormat('EEEE').format(selectedAnchorDate)}";
-              break;
-            case LoanInterestPeriod.monthly:
-              cycleNote =
-                  "Calculates interest monthly on the ${selectedAnchorDate.day}${_getDaySuffix(selectedAnchorDate.day)} of each month";
-              break;
-            case LoanInterestPeriod.yearly:
-              cycleNote =
-                  "Calculates interest annually on ${DateFormat('dd MMMM').format(selectedAnchorDate)} (APR)";
-              break;
-          }
+            String cycleNote;
+            switch (selectedPeriod) {
+              case LoanInterestPeriod.daily:
+                cycleNote = "Calculates interest every single day";
+                break;
+              case LoanInterestPeriod.weekly:
+                cycleNote =
+                    "Calculates interest weekly on every ${DateFormat('EEEE').format(selectedAnchorDate)}";
+                break;
+              case LoanInterestPeriod.monthly:
+                cycleNote =
+                    "Calculates interest monthly on the ${selectedAnchorDate.day}${_getDaySuffix(selectedAnchorDate.day)} of each month";
+                break;
+              case LoanInterestPeriod.yearly:
+                cycleNote =
+                    "Calculates interest annually on ${DateFormat('dd MMMM').format(selectedAnchorDate)} (APR)";
+                break;
+            }
 
-          return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    TextFont(
-                      text: "Configure Loan Interest",
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close_rounded),
-                      onPressed: () => Navigator.of(dialogContext).pop(),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                TextFont(
-                  text:
-                      "Track periodic interest rates and automatically calculate upcoming amounts and next due dates.",
-                  fontSize: 13,
-                  textColor: getColor(context, "textLight"),
-                ),
-                const SizedBox(height: 12),
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
 
                 // Enable Switch
                 SwitchListTile(
@@ -453,6 +441,7 @@ class _InterestLoanWidgetState extends State<InterestLoanWidget> {
           );
         },
       ),
+      ),
     );
   }
 
@@ -498,174 +487,198 @@ class _InterestLoanWidgetState extends State<InterestLoanWidget> {
 
     openBottomSheet(
       context,
-      StatefulBuilder(
-        builder: (dialogContext, setDialogState) {
-          return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      Icons.receipt_long_rounded,
-                      color: Theme.of(context).colorScheme.primary,
-                      size: 24,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: TextFont(
-                        text: widget.objective.income
-                            ? "Collect Interest"
-                            : "Pay Interest",
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                TextFont(
-                  text:
-                      "Services periodic interest charges. Current outstanding principal: ${_formatMoney(context, calc.currentPrincipal)}.",
-                  fontSize: 12,
-                  textColor: getColor(context, "textLight"),
-                ),
-                const SizedBox(height: 16),
-                TextInput(
-                  labelText: "Interest Amount",
-                  controller: amountController,
-                  keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true, signed: false),
-                  padding: const EdgeInsetsDirectional.only(bottom: 12),
-                ),
-                DropdownButtonFormField<String>(
-                  value: selectedWalletPk,
-                  decoration: const InputDecoration(
-                    labelText: "Account / Wallet",
-                    border: OutlineInputBorder(),
-                    contentPadding:
-                        EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      popupWithKeyboard: true,
+      PopupFramework(
+        title: widget.objective.income ? "Collect Interest" : "Pay Interest",
+        subtitle:
+            "Services periodic interest charges. Current outstanding principal: ${_formatMoney(context, calc.currentPrincipal)}.",
+        child: StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextInput(
+                    labelText: "Interest Amount",
+                    controller: amountController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true, signed: false),
+                    padding: const EdgeInsetsDirectional.only(bottom: 12),
                   ),
-                  items: availableWallets.map((w) {
-                    return DropdownMenuItem(
-                      value: w.walletPk,
-                      child: Text(w.name),
-                    );
-                  }).toList(),
-                  onChanged: (val) {
-                    if (val != null) {
-                      setDialogState(() {
-                        selectedWalletPk = val;
-                      });
-                    }
-                  },
-                ),
-                const SizedBox(height: 20),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Button(
-                        label: "Cancel",
-                        color: getColor(context, "canvasContainer"),
-                        textColor: getColor(context, "black"),
-                        onTap: () => Navigator.of(dialogContext).pop(),
-                      ),
+                  DropdownButtonFormField<String>(
+                    value: selectedWalletPk,
+                    decoration: const InputDecoration(
+                      labelText: "Account / Wallet",
+                      border: OutlineInputBorder(),
+                      contentPadding:
+                          EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                     ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Button(
-                        label: "Record Payment",
-                        color: Theme.of(context).colorScheme.primary,
-                        textColor: Theme.of(context).colorScheme.onPrimary,
-                        onTap: () async {
-                          final enteredAmt =
-                              double.tryParse(amountController.text.trim()) ??
-                                  0.0;
-                          if (enteredAmt <= 0) return;
-
-                          Navigator.of(dialogContext).pop();
-
-                          // If amount paid is more than pending interest, ask to adjust with principal
-                          if (pendingInterest > 0 &&
-                              enteredAmt > pendingInterest + 0.01) {
-                            final excess = enteredAmt - pendingInterest;
-                            openPopup(
-                              context,
-                              title: "Adjust Excess with Principal?",
-                              description:
-                                  "Amount entered (${_formatMoney(context, enteredAmt)}) exceeds pending interest (${_formatMoney(context, pendingInterest)}) by ${_formatMoney(context, excess)}.\n\nShould the excess ${_formatMoney(context, excess)} be adjusted to reduce the outstanding loan principal?",
-                              icon: Icons.swap_horiz_rounded,
-                              onSubmitLabel: "Yes, Adjust Principal",
-                              onSubmit: () async {
-                                Navigator.of(context).pop();
-                                await InterestLoanManager.instance
-                                    .recordInterestPayment(
-                                  objective: widget.objective,
-                                  amount: pendingInterest,
-                                  walletPk: selectedWalletPk,
-                                  note: "Interest payment for cycle",
-                                );
-                                await InterestLoanManager.instance
-                                    .recordPrincipalRepayment(
-                                  objective: widget.objective,
-                                  amount: excess,
-                                  walletPk: selectedWalletPk,
-                                  note:
-                                      "Excess interest adjusted against principal",
-                                );
-                                openSnackbar(
-                                  SnackbarMessage(
-                                    title:
-                                        "Payment Recorded & Principal Adjusted",
-                                    description:
-                                        "Interest: ${_formatMoney(context, pendingInterest)} | Principal Reduced by: ${_formatMoney(context, excess)}",
-                                    icon: Icons.check_circle_outline,
-                                  ),
-                                );
-                              },
-                              onCancelLabel: "No, Keep as Interest",
-                              onCancel: () async {
-                                Navigator.of(context).pop();
-                                await InterestLoanManager.instance
-                                    .recordInterestPayment(
-                                  objective: widget.objective,
-                                  amount: enteredAmt,
-                                  walletPk: selectedWalletPk,
-                                );
-                                openSnackbar(
-                                  SnackbarMessage(
-                                    title: "Interest payment recorded",
-                                    icon: Icons.check_circle_outline,
-                                  ),
-                                );
-                              },
-                            );
-                          } else {
-                            await InterestLoanManager.instance
-                                .recordInterestPayment(
-                              objective: widget.objective,
-                              amount: enteredAmt,
-                              walletPk: selectedWalletPk,
-                            );
-                            openSnackbar(
-                              SnackbarMessage(
-                                title:
-                                    "Interest payment recorded (Principal unchanged)",
-                                icon: Icons.check_circle_outline,
-                              ),
-                            );
-                          }
-                        },
+                    items: availableWallets.map((w) {
+                      return DropdownMenuItem(
+                        value: w.walletPk,
+                        child: Text(w.name),
+                      );
+                    }).toList(),
+                    onChanged: (val) {
+                      if (val != null) {
+                        setDialogState(() {
+                          selectedWalletPk = val;
+                        });
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Button(
+                          label: "Cancel",
+                          color: getColor(context, "canvasContainer"),
+                          textColor: getColor(context, "black"),
+                          onTap: () => Navigator.of(dialogContext).pop(),
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          );
-        },
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Button(
+                          label: "Record Payment",
+                          color: Theme.of(context).colorScheme.primary,
+                          textColor: Theme.of(context).colorScheme.onPrimary,
+                          onTap: () async {
+                            final enteredAmt =
+                                double.tryParse(amountController.text.trim()) ??
+                                    0.0;
+                            if (enteredAmt <= 0) return;
+
+                            Navigator.of(dialogContext).pop();
+
+                            // If amount paid is more than pending interest, ask to adjust with principal
+                            if (pendingInterest > 0 &&
+                                enteredAmt > pendingInterest + 0.01) {
+                              final excess = enteredAmt - pendingInterest;
+                              openPopup(
+                                context,
+                                title: "Adjust Excess with Principal?",
+                                description:
+                                    "Amount entered (${_formatMoney(context, enteredAmt)}) exceeds pending interest (${_formatMoney(context, pendingInterest)}) by ${_formatMoney(context, excess)}.\n\nShould the excess ${_formatMoney(context, excess)} be adjusted to reduce the outstanding loan principal?",
+                                icon: Icons.swap_horiz_rounded,
+                                onSubmitLabel: "Yes, Adjust Principal",
+                                onSubmit: () async {
+                                  Navigator.of(context).pop();
+                                  await InterestLoanManager.instance
+                                      .recordInterestPayment(
+                                    objective: widget.objective,
+                                    amount: pendingInterest,
+                                    walletPk: selectedWalletPk,
+                                    note: "Interest payment for cycle",
+                                  );
+                                  await InterestLoanManager.instance
+                                      .recordPrincipalRepayment(
+                                    objective: widget.objective,
+                                    amount: excess,
+                                    walletPk: selectedWalletPk,
+                                    note:
+                                        "Excess interest adjusted against principal",
+                                  );
+                                  openSnackbar(
+                                    SnackbarMessage(
+                                      title:
+                                          "Payment Recorded & Principal Adjusted",
+                                      description:
+                                          "Interest: ${_formatMoney(context, pendingInterest)} | Principal Reduced by: ${_formatMoney(context, excess)}",
+                                      icon: Icons.check_circle_outline,
+                                    ),
+                                  );
+                                },
+                                onCancelLabel: "No, Keep as Interest",
+                                onCancel: () async {
+                                  Navigator.of(context).pop();
+                                  await InterestLoanManager.instance
+                                      .recordInterestPayment(
+                                    objective: widget.objective,
+                                    amount: enteredAmt,
+                                    walletPk: selectedWalletPk,
+                                  );
+                                  openSnackbar(
+                                    SnackbarMessage(
+                                      title: "Interest payment recorded",
+                                      icon: Icons.check_circle_outline,
+                                    ),
+                                  );
+                                },
+                              );
+                            } else if (pendingInterest <= 0) {
+                              // If no interest is due, ask whether to adjust with principal
+                              openPopup(
+                                context,
+                                title: "Apply to Principal?",
+                                description:
+                                    "No pending interest is due.\n\nShould this payment of ${_formatMoney(context, enteredAmt)} be applied to reduce the outstanding loan principal?",
+                                icon: Icons.payments_rounded,
+                                onSubmitLabel: "Yes, Reduce Principal",
+                                onSubmit: () async {
+                                  Navigator.of(context).pop();
+                                  await InterestLoanManager.instance
+                                      .recordPrincipalRepayment(
+                                    objective: widget.objective,
+                                    amount: enteredAmt,
+                                    walletPk: selectedWalletPk,
+                                    note: "Principal reduction payment",
+                                  );
+                                  openSnackbar(
+                                    SnackbarMessage(
+                                      title: "Principal balance reduced",
+                                      description:
+                                          "Paid: ${_formatMoney(context, enteredAmt)} towards principal",
+                                      icon: Icons.check_circle_outline,
+                                    ),
+                                  );
+                                },
+                                onCancelLabel: "No, Record as Interest",
+                                onCancel: () async {
+                                  Navigator.of(context).pop();
+                                  await InterestLoanManager.instance
+                                      .recordInterestPayment(
+                                    objective: widget.objective,
+                                    amount: enteredAmt,
+                                    walletPk: selectedWalletPk,
+                                    note: "Advance interest payment",
+                                  );
+                                  openSnackbar(
+                                    SnackbarMessage(
+                                      title: "Interest payment recorded",
+                                      icon: Icons.check_circle_outline,
+                                    ),
+                                  );
+                                },
+                              );
+                            } else {
+                              await InterestLoanManager.instance
+                                  .recordInterestPayment(
+                                objective: widget.objective,
+                                amount: enteredAmt,
+                                walletPk: selectedWalletPk,
+                              );
+                              openSnackbar(
+                                SnackbarMessage(
+                                  title:
+                                      "Interest payment recorded (Principal unchanged)",
+                                  icon: Icons.check_circle_outline,
+                                ),
+                              );
+                            }
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
       ),
     );
   }
@@ -692,41 +705,21 @@ class _InterestLoanWidgetState extends State<InterestLoanWidget> {
 
     openBottomSheet(
       context,
-      StatefulBuilder(
-        builder: (dialogContext, setDialogState) {
-          return Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      Icons.payments_rounded,
-                      color: Theme.of(context).colorScheme.primary,
-                      size: 24,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: TextFont(
-                        text: widget.objective.income
-                            ? "Collect Part-Principal"
-                            : "Pay Part-Principal",
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                TextFont(
-                  text:
-                      "Reduces the outstanding principal from ${_formatMoney(context, calc.currentPrincipal)}. Future interest will be calculated on the lower remaining balance.",
-                  fontSize: 12,
-                  textColor: getColor(context, "textLight"),
-                ),
-                const SizedBox(height: 16),
+      popupWithKeyboard: true,
+      PopupFramework(
+        title: widget.objective.income
+            ? "Collect Part-Principal"
+            : "Pay Part-Principal",
+        subtitle:
+            "Reduces the outstanding principal from ${_formatMoney(context, calc.currentPrincipal)}. Future interest will be calculated on the lower remaining balance.",
+        child: StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                 TextInput(
                   labelText: "Part-Payment Amount",
                   controller: amountController,
@@ -806,6 +799,7 @@ class _InterestLoanWidgetState extends State<InterestLoanWidget> {
           );
         },
       ),
+      ),
     );
   }
 
@@ -821,16 +815,23 @@ class _InterestLoanWidgetState extends State<InterestLoanWidget> {
           fallbackStartDate: widget.objective.dateCreated,
         );
 
-        return StreamBuilder<List<Transaction>>(
-          stream: database
-              .watchAllTransactionsBelongingToObjective(widget.objective.objectivePk),
-          builder: (context, snapshot) {
-            final transactions = snapshot.data ?? [];
-            final calc = LoanInterestCalculationResult.calculate(
-              objective: widget.objective,
-              config: config,
-              transactions: transactions,
-            );
+        return StreamBuilder<double?>(
+          stream: database.watchTotalAmountObjectiveLoan(
+              Provider.of<AllWallets>(context), widget.objective),
+          builder: (context, loanTotalSnapshot) {
+            final loanTotalFromDb = loanTotalSnapshot.data ?? 0.0;
+
+            return StreamBuilder<List<Transaction>>(
+              stream: database.watchAllTransactionsBelongingToObjective(
+                  widget.objective.objectivePk),
+              builder: (context, snapshot) {
+                final transactions = snapshot.data ?? [];
+                final calc = LoanInterestCalculationResult.calculate(
+                  objective: widget.objective,
+                  config: config,
+                  transactions: transactions,
+                  fallbackPrincipal: loanTotalFromDb,
+                );
 
             return StreamBuilder<List<TransactionWallet>>(
               stream: database.watchAllWallets(),
@@ -921,6 +922,7 @@ class _InterestLoanWidgetState extends State<InterestLoanWidget> {
                                           fontSize: 16,
                                           fontWeight: FontWeight.bold,
                                           maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
                                         ),
                                         TextFont(
                                           text: config.isEnabled
@@ -928,6 +930,7 @@ class _InterestLoanWidgetState extends State<InterestLoanWidget> {
                                               : "Periodic interest is disabled",
                                           fontSize: 12,
                                           maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
                                           textColor:
                                               getColor(context, "textLight"),
                                         ),
@@ -940,7 +943,7 @@ class _InterestLoanWidgetState extends State<InterestLoanWidget> {
                             IconButton(
                               icon: const Icon(Icons.tune_rounded, size: 22),
                               onPressed: () =>
-                                  _showConfigureInterestDialog(transactions),
+                                  _showConfigureInterestDialog(transactions, loanTotalFromDb),
                               tooltip: "Configure Interest",
                             ),
                           ],
@@ -1031,58 +1034,42 @@ class _InterestLoanWidgetState extends State<InterestLoanWidget> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Row(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.spaceBetween,
                                   children: [
-                                    Expanded(
-                                      child: Row(
-                                        children: [
-                                          Icon(
-                                            Icons.upcoming_rounded,
-                                            size: 16,
-                                            color: widget.objective.income
-                                                ? getColor(context, "incomeAmount")
-                                                : getColor(context, "expenseAmount"),
-                                          ),
-                                          const SizedBox(width: 6),
-                                          Expanded(
-                                            child: FittedBox(
-                                              fit: BoxFit.scaleDown,
-                                              alignment: AlignmentDirectional.centerStart,
-                                              child: TextFont(
-                                                text:
-                                                    "Upcoming ${config.periodLabel} Interest (${widget.objective.income ? "To Collect" : "To Pay"})",
-                                                fontSize: 13,
-                                                fontWeight: FontWeight.bold,
-                                                maxLines: 1,
-                                                textColor: widget.objective.income
-                                                    ? getColor(context, "incomeAmount")
-                                                    : getColor(context, "expenseAmount"),
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
+                                    Icon(
+                                      Icons.upcoming_rounded,
+                                      size: 16,
+                                      color: widget.objective.income
+                                          ? getColor(context, "incomeAmount")
+                                          : getColor(context, "expenseAmount"),
                                     ),
                                     const SizedBox(width: 6),
-                                    Flexible(
-                                      child: Container(
-                                        padding: const EdgeInsets.symmetric(
-                                            horizontal: 6, vertical: 3),
-                                        decoration: BoxDecoration(
-                                          color: dueBadgeColor.withOpacity(0.12),
-                                          borderRadius:
-                                              BorderRadius.circular(8),
-                                        ),
-                                        child: FittedBox(
-                                          fit: BoxFit.scaleDown,
-                                          child: TextFont(
-                                            text: dueBadgeText,
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.bold,
-                                            textColor: dueBadgeColor,
-                                          ),
-                                        ),
+                                    Expanded(
+                                      child: TextFont(
+                                        text:
+                                            "Upcoming ${config.periodLabel} Interest (${widget.objective.income ? "To Collect" : "To Pay"})",
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.bold,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        textColor: widget.objective.income
+                                            ? getColor(context, "incomeAmount")
+                                            : getColor(context, "expenseAmount"),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 7, vertical: 3),
+                                      decoration: BoxDecoration(
+                                        color: dueBadgeColor.withOpacity(0.12),
+                                        borderRadius:
+                                            BorderRadius.circular(8),
+                                      ),
+                                      child: TextFont(
+                                        text: dueBadgeText,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold,
+                                        textColor: dueBadgeColor,
                                       ),
                                     ),
                                   ],
@@ -1102,6 +1089,7 @@ class _InterestLoanWidgetState extends State<InterestLoanWidget> {
                                         fontSize: 22,
                                         fontWeight: FontWeight.bold,
                                         maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
                                         textColor: widget.objective.income
                                             ? getColor(context, "incomeAmount")
                                             : getColor(context, "expenseAmount"),
@@ -1204,20 +1192,30 @@ class _InterestLoanWidgetState extends State<InterestLoanWidget> {
                                     TextFont(
                                       text: "Outstanding Principal",
                                       fontSize: 11,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
                                       textColor: getColor(context, "textLight"),
                                     ),
                                     const SizedBox(height: 4),
-                                    TextFont(
-                                      text: _formatMoney(
-                                          context, calc.currentPrincipal),
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
+                                    FittedBox(
+                                      fit: BoxFit.scaleDown,
+                                      alignment: AlignmentDirectional.centerStart,
+                                      child: TextFont(
+                                        text: _formatMoney(
+                                            context, calc.currentPrincipal),
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                      ),
                                     ),
-                                    TextFont(
-                                      text:
-                                          "Orig: ${_formatMoney(context, calc.originalPrincipal)}",
-                                      fontSize: 10,
-                                      textColor: getColor(context, "textLight"),
+                                    FittedBox(
+                                      fit: BoxFit.scaleDown,
+                                      alignment: AlignmentDirectional.centerStart,
+                                      child: TextFont(
+                                        text:
+                                            "Orig: ${_formatMoney(context, calc.originalPrincipal)}",
+                                        fontSize: 10,
+                                        textColor: getColor(context, "textLight"),
+                                      ),
                                     ),
                                   ],
                                 ),
@@ -1243,23 +1241,33 @@ class _InterestLoanWidgetState extends State<InterestLoanWidget> {
                                     TextFont(
                                       text: "Accrued Interest Due",
                                       fontSize: 11,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
                                       textColor: getColor(context, "textLight"),
                                     ),
                                     const SizedBox(height: 4),
-                                    TextFont(
-                                      text: _formatMoney(
-                                          context, calc.accruedInterestDue),
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                      textColor: calc.accruedInterestDue > 0
-                                          ? Colors.amber.shade900
-                                          : null,
+                                    FittedBox(
+                                      fit: BoxFit.scaleDown,
+                                      alignment: AlignmentDirectional.centerStart,
+                                      child: TextFont(
+                                        text: _formatMoney(
+                                            context, calc.accruedInterestDue),
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                        textColor: calc.accruedInterestDue > 0
+                                            ? Colors.amber.shade900
+                                            : null,
+                                      ),
                                     ),
-                                    TextFont(
-                                      text:
-                                          "Paid: ${_formatMoney(context, calc.totalInterestPaid)}",
-                                      fontSize: 10,
-                                      textColor: getColor(context, "textLight"),
+                                    FittedBox(
+                                      fit: BoxFit.scaleDown,
+                                      alignment: AlignmentDirectional.centerStart,
+                                      child: TextFont(
+                                        text:
+                                            "Paid: ${_formatMoney(context, calc.totalInterestPaid)}",
+                                        fontSize: 10,
+                                        textColor: getColor(context, "textLight"),
+                                      ),
                                     ),
                                   ],
                                 ),
@@ -1343,6 +1351,8 @@ class _InterestLoanWidgetState extends State<InterestLoanWidget> {
         );
       },
     );
+  },
+);
   }
 
   Widget _buildCycleRatePill(

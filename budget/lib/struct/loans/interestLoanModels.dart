@@ -121,6 +121,7 @@ class LoanInterestCalculationResult {
     required Objective objective,
     required InterestLoanConfig config,
     required List<Transaction> transactions,
+    double fallbackPrincipal = 0.0,
   }) {
     double initialDisbursements = 0.0;
     double principalRepayments = 0.0;
@@ -129,9 +130,15 @@ class LoanInterestCalculationResult {
     DateTime lastInterestPaymentDate = config.startDate;
 
     for (final t in transactions) {
-      if (!t.paid) continue;
       final note = t.note ?? "";
       final name = t.name.toLowerCase();
+      final isInitial = name.contains("initial") ||
+          note.toLowerCase().contains("initial") ||
+          name.contains("disbursement") ||
+          (transactions.length == 1 && t.income == !objective.income);
+
+      // Do not skip initial record even if unpaid
+      if (!t.paid && !isInitial) continue;
 
       if (note.contains(INTEREST_PAYMENT_TAG) || name.contains("(interest")) {
         interestPaid += t.amount.abs();
@@ -145,7 +152,7 @@ class LoanInterestCalculationResult {
           name.contains("principal repayment") ||
           name.contains("principal received")) {
         principalRepayments += t.amount.abs();
-      } else if (name.contains("initial") || note.toLowerCase().contains("initial")) {
+      } else if (isInitial) {
         // Explicitly recognise initial disbursement record regardless of past polarity glitches
         initialDisbursements += t.amount.abs();
       } else if (t.income == !objective.income) {
@@ -157,12 +164,17 @@ class LoanInterestCalculationResult {
       }
     }
 
-    final double originalPrincipal = (initialDisbursements > 0
-            ? initialDisbursements
-            : objective.amount.abs())
-        .clamp(0.0, double.infinity);
-    final double currentPrincipal = (originalPrincipal + principalTopUps - principalRepayments)
-        .clamp(0.0, double.infinity);
+    final double effectiveInitial = initialDisbursements > 0
+        ? initialDisbursements
+        : (fallbackPrincipal > 0
+            ? fallbackPrincipal
+            : objective.amount.abs());
+
+    final double originalPrincipal =
+        effectiveInitial.clamp(0.0, double.infinity);
+    final double currentPrincipal =
+        (originalPrincipal + principalTopUps - principalRepayments)
+            .clamp(0.0, double.infinity);
 
     // Calculate rates for all cycles
     final rawRate = (config.interestRate / 100.0);

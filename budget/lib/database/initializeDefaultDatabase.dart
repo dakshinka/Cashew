@@ -21,9 +21,10 @@ Future<bool> initializeDefaultDatabase() async {
       customDateTimeModified: DateTime(0),
     );
   } else {
-    // If the default wallet exists but has usd or null, switch to inr
+    // If the default or single wallet exists but has usd or null, switch to inr
     for (final w in existingWallets) {
-      if (w.walletPk == "0" && (w.currency == "usd" || w.currency == null)) {
+      if ((w.walletPk == "0" || existingWallets.length == 1) &&
+          (w.currency == "usd" || w.currency == null)) {
         await database.createOrUpdateWallet(
           w.copyWith(currency: Value("inr")),
         );
