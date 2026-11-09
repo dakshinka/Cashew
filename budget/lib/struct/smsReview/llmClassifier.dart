@@ -40,19 +40,19 @@ CLASSIFICATION RULES:
 1. "advertisement": Credit card offers, loan pre-approvals, discount promos, cashback banners, marketing ("Pre-approved personal loan", "Get Rs 500 off", "Apply now"). isTransaction MUST be false.
 2. "balance_inquiry": Messages that ONLY state the current or available balance without a new debit or credit ("Available balance in A/c is Rs 4500", "Clear balance as on..."). isTransaction MUST be false.
 3. "otp": One-time passwords, login security alerts. isTransaction MUST be false.
-4. "information": Non-transaction banking alerts (e.g. KYC update, daily limit notice, mandate created, cheque book dispatch). isTransaction MUST be false.
+4. "information": Non-transaction banking alerts, future mandates, or scheduled notices (e.g. "E-Mandate! Rs... will be deducted on...", "will be debited on...", KYC update, daily limit notice, mandate created, cheque book dispatch). isTransaction MUST be false.
 5. "bill_reminder": Due date reminders or upcoming bill alerts ("Reminder: Bill of Rs... is due on...", "Payment due for your card"). Set isTransaction to true ONLY so the user can verify if they paid it; set isReminder to true.
-6. "debit": Money actually debited, spent, paid, sent, withdrawn, or transferred from user's account/card. isTransaction MUST be true.
+6. "debit": Money ALREADY completed, debited, spent, paid, sent, withdrawn, or transferred from user's account/card. Past-tense indicators like "spent", "sent", "debited", "paid" signify actual completed expenses. If it says "will be deducted" or "will be debited", it is an informational future mandate, NOT a debit (isTransaction MUST be false).
 7. "credit": Money actually credited, deposited, refunded, or received into user's account. isTransaction MUST be true.
 
 ENTITY EXTRACTION:
-- merchant: The genuine shop, vendor, or recipient (e.g. "Raja Enterprises", "Swiggy", "Amazon", "Chai Point"). Clean up UPI handles like @okaxis. If it is a tea shop, food stall, or store, name the business, NEVER the user/account holder.
+- merchant: The genuine shop, vendor, or recipient (e.g. "Raja Enterprises", "Swiggy", "Amazon", "Bharti Airtel"). Clean up UPI handles like @okaxis. If it is a utility or recharge (e.g. "BHARTI AIRTEL LTD"), the merchant is "Bharti Airtel", NEVER the bank!
 - category: One of "Food & Dining", "Groceries", "Transportation", "Shopping", "Entertainment", "Health & Medical", "Utilities & Bills", "Income & Salary", "Online Transfer", "Other". (For commercial stores, enterprises, traders, vendor payouts, or bank transfers, classify as "Online Transfer" or "Shopping").
 - currency: Currency symbol or code (e.g. "INR", "USD", "EUR", "₹", "\$"). For Indian banks (HDFC, SBI, ICICI, Axis, PNB, Kotak, etc.) and UPI, MUST be "INR" or "₹".
 - amount: The FULL EXACT numeric amount transacted. CRITICAL: Capture full thousands/lakhs without truncation (e.g. "4500.00" must be 4500.00, NOT 450; "1000.00" must be 1000.00; "1,50,000.00" must be 150000.00). Never extract the remaining balance number.
 - isReminder: boolean (true if this is a bill reminder or upcoming payment due notice).
 - date: ISO 8601 date (YYYY-MM-DDTHH:MM:SS) if a date/time is mentioned in the SMS, otherwise null.
-- accountHint: The full clean bank/institution account name with number or mask (e.g. "HDFC A/C *4340", "RBL Credit Card *9547", "SBI A/C *5678", "Cash"). Include the bank name and account/card number (e.g. *4340 or *9547). CRITICAL: NEVER put the transaction amount into accountHint (e.g. if amount is 500, never output "HDFC A/C 500"; if amount is 349, never output "Credit Card 349").
+- accountHint: The payment source account/card extracted from the "on / from / using / via" clause (e.g. in "spent at BHARTI AIRTEL LTD on RBL Bank credit card (9547)", the merchant is "Bharti Airtel" and the account is "RBL Credit Card *9547", NEVER Airtel!). Include the bank name and account/card number (e.g. *4340 or *9547). CRITICAL: NEVER confuse the merchant with the account name, and NEVER put the transaction amount into accountHint.
 
 Output ONLY valid JSON matching this schema:
 {

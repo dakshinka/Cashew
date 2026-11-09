@@ -43,18 +43,20 @@ class ReviewManager {
         _items.clear();
         for (final item in list) {
           final tx = ReviewTransaction.fromJson(item as Map<String, dynamic>);
-          // Self-heal amounts, currency, and account hints for pending items from original SMS
+          // Self-heal pending items: drop non-transactions (like e-mandates) and re-extract correct account hints
           if (tx.status == ReviewStatus.pending && tx.rawMessage.isNotEmpty) {
             final parsed = SmsParser.parse(tx.rawMessage);
-            if (parsed.success && parsed.amount > 0) {
-              if ((tx.amount - parsed.amount).abs() > 0.01) {
-                tx.amount = parsed.amount;
-              }
-              tx.currency = parsed.currency;
-              final clean = AiCategorizer.cleanMerchantName(parsed.rawMerchant);
-              if (clean.isNotEmpty && clean != "Other") {
-                tx.cleanMerchant = clean;
-              }
+            if (!parsed.success || parsed.amount <= 0) {
+              // It is an informational alert or e-mandate notice, not a completed transaction
+              continue;
+            }
+            if ((tx.amount - parsed.amount).abs() > 0.01) {
+              tx.amount = parsed.amount;
+            }
+            tx.currency = parsed.currency;
+            final clean = AiCategorizer.cleanMerchantName(parsed.rawMerchant);
+            if (clean.isNotEmpty && clean != "Other") {
+              tx.cleanMerchant = clean;
             }
             if (parsed.accountHint != null && parsed.accountHint!.isNotEmpty) {
               tx.accountHint = canonicalizeAccountName(parsed.accountHint!);
@@ -351,7 +353,7 @@ class ReviewManager {
     // Detect Bank
     String? bank;
     final bankRegex = RegExp(
-      r'\b(HDFC|SBI|State\s+Bank\s+of\s+India|ICICI|Axis|Kotak|PNB|Punjab\s+National\s+Bank|Canara|Bank\s+of\s+Baroda|BOB|IDFC|IndusInd|Yes\s+Bank|YES|Federal\s+Bank|Standard\s+Chartered|Citi(?:bank)?|HSBC|RBL|Union\s+Bank|Indian\s+Bank|BOI|Bank\s+of\s+India|Central\s+Bank|IOB|Indian\s+Overseas\s+Bank|UCO|South\s+Indian\s+Bank|Karur\s+Vysya|KVB|DBS|AU|Bandhan|Paytm|Airtel)\b',
+      r'\b(HDFC|SBI|State\s+Bank\s+of\s+India|ICICI|Axis|Kotak|PNB|Punjab\s+National\s+Bank|Canara|Bank\s+of\s+Baroda|BOB|IDFC|IndusInd|Yes\s+Bank|YES|Federal\s+Bank|Standard\s+Chartered|Citi(?:bank)?|HSBC|RBL|Union\s+Bank|Indian\s+Bank|BOI|Bank\s+of\s+India|Central\s+Bank|IOB|Indian\s+Overseas\s+Bank|UCO|South\s+Indian\s+Bank|Karur\s+Vysya|KVB|DBS|AU|Bandhan|Paytm\s+Payments\s+Bank|Airtel\s+(?:Payments\s+)?Bank)\b',
       caseSensitive: false,
     );
     final bankMatch = bankRegex.firstMatch(trimmed);

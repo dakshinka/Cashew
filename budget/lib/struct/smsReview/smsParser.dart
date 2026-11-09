@@ -160,6 +160,18 @@ class SmsParser {
 
   /// Informational banking & regulatory notification keywords (not transactions)
   static final List<String> _informationKeywords = [
+    "e-mandate",
+    "mandate",
+    "will be deducted",
+    "will be debited",
+    "will be charged",
+    "scheduled to be",
+    "scheduled on",
+    "scheduled for",
+    "auto-debit scheduled",
+    "autopay scheduled",
+    "standing instruction",
+    "si scheduled",
     "kyc",
     "service request",
     "ticket no",
@@ -224,20 +236,43 @@ class SmsParser {
     }
 
     // 2. Bank name detection
+    // Prioritize the payment/account clause introduced by "on", "from", "using", "via", "with"
+    // (e.g. "on RBL Bank credit card (9547)", "From HDFC Bank A/C *4340")
     String? bankName;
     final bankRegex = RegExp(
-      r'\b(HDFC(?:\s+Bank)?|SBI|State\s+Bank\s+of\s+India|ICICI(?:\s+Bank)?|Axis(?:\s+Bank)?|Kotak(?:\s+Bank)?|PNB|Punjab\s+National\s+Bank|Canara(?:\s+Bank)?|Bank\s+of\s+Baroda|BOB|IDFC(?:\s+FIRST(?:\s+Bank)?)?|IndusInd(?:\s+Bank)?|Yes\s+Bank|YES|Federal\s+Bank|Standard\s+Chartered|Citi(?:bank)?|HSBC|RBL(?:\s+Bank)?|Union\s+Bank(?:\s+of\s+India)?|Indian\s+Bank|BOI|Bank\s+of\s+India|Central\s+Bank(?:\s+of\s+India)?|IOB|Indian\s+Overseas\s+Bank|UCO(?:\s+Bank)?|South\s+Indian\s+Bank|Karur\s+Vysya(?:\s+Bank)?|KVB|DBS(?:\s+Bank)?|AU(?:\s+Small\s+Finance\s+Bank)?|Bandhan(?:\s+Bank)?|Paytm(?:\s+Payments\s+Bank)?|Airtel(?:\s+Payments\s+Bank)?)\b',
+      r'\b(HDFC(?:\s+Bank)?|SBI|State\s+Bank\s+of\s+India|ICICI(?:\s+Bank)?|Axis(?:\s+Bank)?|Kotak(?:\s+Bank)?|PNB|Punjab\s+National\s+Bank|Canara(?:\s+Bank)?|Bank\s+of\s+Baroda|BOB|IDFC(?:\s+FIRST(?:\s+Bank)?)?|IndusInd(?:\s+Bank)?|Yes\s+Bank|YES|Federal\s+Bank|Standard\s+Chartered|Citi(?:bank)?|HSBC|RBL(?:\s+Bank)?|Union\s+Bank(?:\s+of\s+India)?|Indian\s+Bank|BOI|Bank\s+of\s+India|Central\s+Bank(?:\s+of\s+India)?|IOB|Indian\s+Overseas\s+Bank|UCO(?:\s+Bank)?|South\s+Indian\s+Bank|Karur\s+Vysya(?:\s+Bank)?|KVB|DBS(?:\s+Bank)?|AU(?:\s+Small\s+Finance\s+Bank)?|Bandhan(?:\s+Bank)?|Paytm\s+Payments\s+Bank|Airtel\s+(?:Payments\s+)?Bank)\b',
       caseSensitive: false,
     );
-    final bankMatch = bankRegex.firstMatch(message);
-    if (bankMatch != null) {
-      bankName = bankMatch.group(0)?.trim();
+
+    final clauseRegex = RegExp(
+      r'\b(?:on|from|using|via|with|through)\s+([^.]+)',
+      caseSensitive: false,
+    );
+    final clauseMatches = clauseRegex.allMatches(message);
+    for (final cm in clauseMatches) {
+      final clause = cm.group(1);
+      if (clause != null) {
+        final bMatch = bankRegex.firstMatch(clause);
+        if (bMatch != null) {
+          bankName = bMatch.group(0)?.trim();
+          break;
+        }
+      }
+    }
+
+    // Fallback: search whole message if not found in on/from clause
+    if (bankName == null) {
+      final bankMatch = bankRegex.firstMatch(message);
+      if (bankMatch != null) {
+        bankName = bankMatch.group(0)?.trim();
+      }
     }
 
     // 3. Card vs Account
     final isCreditCard = lower.contains("credit card") ||
         lower.contains("card ending") ||
-        lower.contains("creditcard");
+        lower.contains("creditcard") ||
+        RegExp(r'\bcc\b').hasMatch(lower);
     final isDebitCard =
         lower.contains("debit card") || lower.contains("debitcard");
 
@@ -634,11 +669,19 @@ class SmsParser {
       }
     }
 
+    // Exclude future notices like "will be deducted", "will be debited", "e-mandate"
+    final isFutureNotice = lower.contains("will be") ||
+        lower.contains("scheduled to") ||
+        lower.contains("e-mandate") ||
+        lower.contains("standing instruction");
+
     bool isDebit = false;
-    for (final kw in _expenseKeywords) {
-      if (lower.contains(kw)) {
-        isDebit = true;
-        break;
+    if (!isFutureNotice) {
+      for (final kw in _expenseKeywords) {
+        if (lower.contains(kw)) {
+          isDebit = true;
+          break;
+        }
       }
     }
 
