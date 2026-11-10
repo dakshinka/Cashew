@@ -105,6 +105,9 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
       text: appStateSettings["ollamaModel"]?.toString() ?? "llama3.2",
     );
 
+    bool isTestingConnection = false;
+    Map<String, dynamic>? testConnectionResult;
+
     openBottomSheet(
       context,
       StatefulBuilder(
@@ -369,6 +372,102 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
                       ],
                     ),
                   ),
+                  if (selectedProvider != "none") ...[
+                    const SizedBox(height: 10),
+                    Button(
+                      label: isTestingConnection
+                          ? "Testing ${selectedProvider.toUpperCase()} Connection..."
+                          : "Test ${selectedProvider.toUpperCase()} Connection",
+                      icon: isTestingConnection
+                          ? Icons.hourglass_top_rounded
+                          : Icons.wifi_find_rounded,
+                      color: isTestingConnection
+                          ? getColor(context, "dividerColor").withOpacity(0.1)
+                          : Theme.of(context).colorScheme.primary.withOpacity(0.12),
+                      textColor: Theme.of(context).colorScheme.primary,
+                      expandedLayout: true,
+                      onTap: isTestingConnection
+                          ? () {}
+                          : () async {
+                              setSheetState(() {
+                                isTestingConnection = true;
+                                testConnectionResult = null;
+                              });
+
+                              String? key;
+                              String? mod;
+                              String? endp;
+                              if (selectedProvider == "gemini") {
+                                key = apiKeyController.text.trim();
+                                mod = geminiModelController.text.trim();
+                              } else if (selectedProvider == "groq") {
+                                key = groqApiKeyController.text.trim();
+                                mod = groqModelController.text.trim();
+                              } else if (selectedProvider == "openrouter") {
+                                key = openRouterApiKeyController.text.trim();
+                                mod = openRouterModelController.text.trim();
+                              } else if (selectedProvider == "ollama") {
+                                endp = endpointController.text.trim();
+                                mod = modelController.text.trim();
+                              }
+
+                              final result = await LlmClassifier.testConnection(
+                                provider: selectedProvider,
+                                apiKey: key,
+                                model: mod,
+                                endpoint: endp,
+                              );
+
+                              setSheetState(() {
+                                isTestingConnection = false;
+                                testConnectionResult = result;
+                              });
+                            },
+                    ),
+                    if (testConnectionResult != null) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: testConnectionResult!["success"] == true
+                              ? Colors.green.withOpacity(0.12)
+                              : Colors.red.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: testConnectionResult!["success"] == true
+                                ? Colors.green.withOpacity(0.4)
+                                : Colors.red.withOpacity(0.4),
+                          ),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(
+                              testConnectionResult!["success"] == true
+                                  ? Icons.check_circle_rounded
+                                  : Icons.error_outline_rounded,
+                              size: 20,
+                              color: testConnectionResult!["success"] == true
+                                  ? Colors.green
+                                  : Colors.redAccent,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: TextFont(
+                                text: testConnectionResult!["message"] ?? "",
+                                fontSize: 12,
+                                textColor: testConnectionResult!["success"] == true
+                                    ? Colors.green
+                                    : Colors.redAccent,
+                                maxLines: 5,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
                   const SizedBox(height: 12),
                   Button(
                     label: "View & Edit AI Prompt",

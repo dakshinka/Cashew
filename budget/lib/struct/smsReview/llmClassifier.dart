@@ -191,6 +191,130 @@ Output ONLY the rule text to append to the system prompt.
     await updateSettings("customAiPrompt", "", updateGlobalState: true);
   }
 
+  /// Tests connection with provided AI provider, key, model, or endpoint
+  static Future<Map<String, dynamic>> testConnection({
+    required String provider,
+    String? apiKey,
+    String? model,
+    String? endpoint,
+  }) async {
+    final sw = Stopwatch()..start();
+    const testSample =
+        "INR 250.00 spent at CAFE COFFEE DAY on HDFC Bank Card XX4340 on 10-Nov-2026";
+
+    lastAiError = null;
+
+    try {
+      if (provider == "gemini") {
+        final key = apiKey?.trim() ?? "";
+        if (key.isEmpty) {
+          return {
+            "success": false,
+            "message": "Gemini API key is empty. Please enter your key.",
+          };
+        }
+        final res = await _classifyWithGemini(testSample, key, model: model);
+        sw.stop();
+        if (res != null) {
+          return {
+            "success": true,
+            "latencyMs": sw.elapsedMilliseconds,
+            "provider": res.providerUsed ?? "Gemini",
+            "message":
+                "Connected to ${res.providerUsed ?? 'Gemini'} in ${sw.elapsedMilliseconds}ms!\nTest parse: extracted ₹${res.amount.toInt()} at '${res.merchant}'.",
+          };
+        }
+        return {
+          "success": false,
+          "message": lastAiError ??
+              "Failed to get response from Gemini. Check model name or key permissions.",
+        };
+      } else if (provider == "groq") {
+        final key = apiKey?.trim() ?? "";
+        if (key.isEmpty) {
+          return {
+            "success": false,
+            "message": "Groq API key is empty. Please enter your key (gsk_...).",
+          };
+        }
+        final res = await _classifyWithGroq(testSample, key, model: model);
+        sw.stop();
+        if (res != null) {
+          return {
+            "success": true,
+            "latencyMs": sw.elapsedMilliseconds,
+            "provider": res.providerUsed ?? "Groq",
+            "message":
+                "Connected to ${res.providerUsed ?? 'Groq'} in ${sw.elapsedMilliseconds}ms!\nTest parse: extracted ₹${res.amount.toInt()} at '${res.merchant}'.",
+          };
+        }
+        return {
+          "success": false,
+          "message": lastAiError ??
+              "Failed to get response from Groq. Verify API key or model.",
+        };
+      } else if (provider == "openrouter") {
+        final key = apiKey?.trim() ?? "";
+        if (key.isEmpty) {
+          return {
+            "success": false,
+            "message":
+                "OpenRouter API key is empty. Please enter your key (sk-or-...).",
+          };
+        }
+        final res = await _classifyWithOpenRouter(testSample, key, model: model);
+        sw.stop();
+        if (res != null) {
+          return {
+            "success": true,
+            "latencyMs": sw.elapsedMilliseconds,
+            "provider": res.providerUsed ?? "OpenRouter",
+            "message":
+                "Connected to ${res.providerUsed ?? 'OpenRouter'} in ${sw.elapsedMilliseconds}ms!\nTest parse: extracted ₹${res.amount.toInt()} at '${res.merchant}'.",
+          };
+        }
+        return {
+          "success": false,
+          "message": lastAiError ??
+              "Failed to get response from OpenRouter. Verify model slug or key.",
+        };
+      } else if (provider == "ollama") {
+        final ep = endpoint?.trim() ?? "http://localhost:11434";
+        final mdl =
+            (model?.trim().isNotEmpty == true) ? model!.trim() : "llama3.2";
+        final res = await _classifyWithOllama(testSample, ep, mdl);
+        sw.stop();
+        if (res != null) {
+          return {
+            "success": true,
+            "latencyMs": sw.elapsedMilliseconds,
+            "provider": res.providerUsed ?? "Ollama",
+            "message":
+                "Connected to Ollama ($mdl) at $ep in ${sw.elapsedMilliseconds}ms!",
+          };
+        }
+        return {
+          "success": false,
+          "message": lastAiError ??
+              "Failed to connect to Ollama at $ep. Check if Ollama is running and accessible over Wi-Fi.",
+        };
+      } else {
+        return {
+          "success": true,
+          "latencyMs": 0,
+          "provider": "Edge Rules",
+          "message": "Built-in offline engine is active and ready.",
+        };
+      }
+    } catch (e) {
+      sw.stop();
+      return {
+        "success": false,
+        "message": "Connection error: $e",
+      };
+    }
+  }
+
   /// Single provider execution helper
   static Future<LlmClassificationResult?> _tryClassify(
       String provider, String rawMessage) async {
