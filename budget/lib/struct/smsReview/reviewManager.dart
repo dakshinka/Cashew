@@ -302,8 +302,11 @@ class ReviewManager {
     ReviewTransaction? reviewItem;
     DateTime? effectiveDate = overrideDate;
 
-    // 1. If Gemini or Ollama AI is enabled, query LLM classifier first
-    if (provider == "gemini" || provider == "ollama") {
+    // 1. If Gemini, Groq, OpenRouter or Ollama AI is enabled, query LLM classifier first
+    if (provider == "gemini" ||
+        provider == "groq" ||
+        provider == "openrouter" ||
+        provider == "ollama") {
       final llmResult = await LlmClassifier.classify(rawMessage);
       if (llmResult != null) {
         if (!llmResult.isTransaction || llmResult.amount <= 0) {

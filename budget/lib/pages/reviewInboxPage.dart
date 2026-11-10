@@ -66,6 +66,19 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
     final apiKeyController = TextEditingController(
       text: appStateSettings["geminiApiKey"]?.toString() ?? "",
     );
+    final groqApiKeyController = TextEditingController(
+      text: appStateSettings["groqApiKey"]?.toString() ?? "",
+    );
+    final groqModelController = TextEditingController(
+      text: appStateSettings["groqModel"]?.toString() ?? "llama-3.3-70b-versatile",
+    );
+    final openRouterApiKeyController = TextEditingController(
+      text: appStateSettings["openRouterApiKey"]?.toString() ?? "",
+    );
+    final openRouterModelController = TextEditingController(
+      text: appStateSettings["openRouterModel"]?.toString() ??
+          "meta-llama/llama-3.3-70b-instruct:free",
+    );
     final endpointController = TextEditingController(
       text: appStateSettings["ollamaEndpoint"]?.toString() ??
           "http://localhost:11434",
@@ -127,7 +140,7 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
                   ),
                   RadioListTile<String>(
                     title: const TextFont(
-                      text: "Google Gemini 1.5 Flash (Free Cloud API)",
+                      text: "Google Gemini (Free Cloud API)",
                       fontWeight: FontWeight.bold,
                       fontSize: 14,
                     ),
@@ -157,7 +170,97 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
                           const SizedBox(height: 4),
                           TextFont(
                             text:
-                                "Free API key from https://aistudio.google.com/ (no credit card required)",
+                                "Get free key: https://aistudio.google.com/ (no credit card required)",
+                            fontSize: 11,
+                            textColor: getColor(context, "textLight"),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  RadioListTile<String>(
+                    title: const TextFont(
+                      text: "Groq (Ultra-Fast Llama 3.3 - Free)",
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
+                    subtitle: const TextFont(
+                      text:
+                          "Near-instant inference speeds with Llama 3.3 70B.",
+                      fontSize: 12,
+                    ),
+                    value: "groq",
+                    groupValue: selectedProvider,
+                    onChanged: (val) {
+                      setSheetState(() => selectedProvider = val!);
+                    },
+                  ),
+                  if (selectedProvider == "groq") ...[
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 6),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          TextInput(
+                            controller: groqApiKeyController,
+                            labelText: "Groq API Key (gsk_...)",
+                            bubbly: false,
+                          ),
+                          const SizedBox(height: 8),
+                          TextInput(
+                            controller: groqModelController,
+                            labelText: "Model Name (default: llama-3.3-70b-versatile)",
+                            bubbly: false,
+                          ),
+                          const SizedBox(height: 4),
+                          TextFont(
+                            text: "Get free key: https://console.groq.com/keys",
+                            fontSize: 11,
+                            textColor: getColor(context, "textLight"),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  RadioListTile<String>(
+                    title: const TextFont(
+                      text: "OpenRouter (Multi-Model / Free Models)",
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
+                    subtitle: const TextFont(
+                      text:
+                          "Access Llama 3.3, Gemini 2.0 Flash, Claude, and more.",
+                      fontSize: 12,
+                    ),
+                    value: "openrouter",
+                    groupValue: selectedProvider,
+                    onChanged: (val) {
+                      setSheetState(() => selectedProvider = val!);
+                    },
+                  ),
+                  if (selectedProvider == "openrouter") ...[
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 6),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          TextInput(
+                            controller: openRouterApiKeyController,
+                            labelText: "OpenRouter API Key (sk-or-...)",
+                            bubbly: false,
+                          ),
+                          const SizedBox(height: 8),
+                          TextInput(
+                            controller: openRouterModelController,
+                            labelText: "Model Name (e.g. meta-llama/llama-3.3-70b-instruct:free)",
+                            bubbly: false,
+                          ),
+                          const SizedBox(height: 4),
+                          TextFont(
+                            text: "Get key: https://openrouter.ai/keys",
                             fontSize: 11,
                             textColor: getColor(context, "textLight"),
                           ),
@@ -244,6 +347,26 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
                               updateGlobalState: false,
                             );
                             await updateSettings(
+                              "groqApiKey",
+                              groqApiKeyController.text.trim(),
+                              updateGlobalState: false,
+                            );
+                            await updateSettings(
+                              "groqModel",
+                              groqModelController.text.trim(),
+                              updateGlobalState: false,
+                            );
+                            await updateSettings(
+                              "openRouterApiKey",
+                              openRouterApiKeyController.text.trim(),
+                              updateGlobalState: false,
+                            );
+                            await updateSettings(
+                              "openRouterModel",
+                              openRouterModelController.text.trim(),
+                              updateGlobalState: false,
+                            );
+                            await updateSettings(
                               "ollamaEndpoint",
                               endpointController.text.trim(),
                               updateGlobalState: false,
@@ -259,10 +382,14 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
                               SnackbarMessage(
                                 title: "AI Settings Saved",
                                 description: selectedProvider == "gemini"
-                                    ? "Active: Google Gemini 1.5 Flash (Free)"
-                                    : selectedProvider == "ollama"
-                                        ? "Active: Local Ollama (${modelController.text.trim()})"
-                                        : "Active: Built-in Edge Rules",
+                                    ? "Active: Google Gemini Cloud"
+                                    : selectedProvider == "groq"
+                                        ? "Active: Groq (${groqModelController.text.trim()})"
+                                        : selectedProvider == "openrouter"
+                                            ? "Active: OpenRouter (${openRouterModelController.text.trim()})"
+                                            : selectedProvider == "ollama"
+                                                ? "Active: Local Ollama (${modelController.text.trim()})"
+                                                : "Active: Built-in Edge Rules",
                                 icon: Icons.check_circle_outline,
                               ),
                             );

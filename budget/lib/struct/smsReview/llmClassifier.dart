@@ -127,6 +127,45 @@ Output ONLY the rule text to append to the system prompt.
           }
         }
       } catch (_) {}
+    } else if ((provider == "groq" || provider == "openrouter")) {
+      final apiKey = provider == "groq"
+          ? appStateSettings["groqApiKey"]?.toString().trim()
+          : appStateSettings["openRouterApiKey"]?.toString().trim();
+      final urlStr = provider == "groq"
+          ? "https://api.groq.com/openai/v1/chat/completions"
+          : "https://openrouter.ai/api/v1/chat/completions";
+      final model = provider == "groq"
+          ? (appStateSettings["groqModel"]?.toString().trim() ?? "llama-3.3-70b-versatile")
+          : (appStateSettings["openRouterModel"]?.toString().trim() ?? "meta-llama/llama-3.3-70b-instruct:free");
+
+      if (apiKey != null && apiKey.isNotEmpty) {
+        try {
+          final response = await http.post(
+            Uri.parse(urlStr),
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": "Bearer $apiKey",
+            },
+            body: jsonEncode({
+              "model": model,
+              "messages": [
+                {
+                  "role": "user",
+                  "content": "The user flagged this SMS as a REAL financial transaction that was previously missed or misclassified:\n\"\"\"$rawMessage\"\"\"\n\nGenerate a concise 1-2 sentence learning rule and few-shot example for why this is a transaction, how to extract the amount/merchant/account, and what keywords to check. Output ONLY the rule text to append to system prompt."
+                }
+              ],
+              "temperature": 0.2,
+            }),
+          );
+          if (response.statusCode == 200) {
+            final resData = jsonDecode(response.body);
+            final text = resData["choices"]?[0]?["message"]?["content"]?.toString().trim();
+            if (text != null && text.isNotEmpty) {
+              learnedRule = text;
+            }
+          }
+        } catch (_) {}
+      }
     }
 
     final existingRules = appStateSettings["customAiRules"]?.toString().trim() ?? "";
@@ -166,6 +205,22 @@ Output ONLY the rule text to append to the system prompt.
       if (key != null && key.isNotEmpty) {
         try {
           return await _classifyWithGemini(rawMessage, key);
+        } catch (_) {}
+      }
+    } else if (provider == "groq") {
+      final key = appStateSettings["groqApiKey"]?.toString().trim();
+      final model = appStateSettings["groqModel"]?.toString().trim();
+      if (key != null && key.isNotEmpty) {
+        try {
+          return await _classifyWithGroq(rawMessage, key, model: model);
+        } catch (_) {}
+      }
+    } else if (provider == "openrouter") {
+      final key = appStateSettings["openRouterApiKey"]?.toString().trim();
+      final model = appStateSettings["openRouterModel"]?.toString().trim();
+      if (key != null && key.isNotEmpty) {
+        try {
+          return await _classifyWithOpenRouter(rawMessage, key, model: model);
         } catch (_) {}
       }
     } else if (provider == "ollama") {
@@ -213,6 +268,88 @@ Output ONLY the rule text to append to the system prompt.
     if (response.statusCode == 200) {
       final jsonBody = jsonDecode(response.body);
       final text = jsonBody["candidates"]?[0]?["content"]?["parts"]?[0]?["text"];
+      if (text != null) {
+        return _parseJsonResponse(text, rawMessage: rawMessage);
+      }
+    }
+    return null;
+  }
+
+  /// Groq (Ultra-Fast Cloud Llama 3.3 / Llama 3.1)
+  static Future<LlmClassificationResult?> _classifyWithGroq(
+      String rawMessage, String apiKey, {String? model}) async {
+    final url = Uri.parse("https://api.groq.com/openai/v1/chat/completions");
+    final activeModel = (model != null && model.isNotEmpty)
+        ? model
+        : "llama-3.3-70b-versatile";
+
+    final response = await http
+        .post(
+          url,
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer $apiKey",
+          },
+          body: jsonEncode({
+            "model": activeModel,
+            "messages": [
+              {"role": "system", "content": getSystemPrompt()},
+              {
+                "role": "user",
+                "content": "SMS TO CLASSIFY:\n\"\"\"$rawMessage\"\"\""
+              }
+            ],
+            "response_format": {"type": "json_object"},
+            "temperature": 0.1,
+          }),
+        )
+        .timeout(const Duration(seconds: 10));
+
+    if (response.statusCode == 200) {
+      final jsonBody = jsonDecode(response.body);
+      final text = jsonBody["choices"]?[0]?["message"]?["content"];
+      if (text != null) {
+        return _parseJsonResponse(text, rawMessage: rawMessage);
+      }
+    }
+    return null;
+  }
+
+  /// OpenRouter (Any Cloud Model - Llama 3.3, Gemini 2.0 Flash, Mistral, Claude)
+  static Future<LlmClassificationResult?> _classifyWithOpenRouter(
+      String rawMessage, String apiKey, {String? model}) async {
+    final url = Uri.parse("https://openrouter.ai/api/v1/chat/completions");
+    final activeModel = (model != null && model.isNotEmpty)
+        ? model
+        : "meta-llama/llama-3.3-70b-instruct:free";
+
+    final response = await http
+        .post(
+          url,
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer $apiKey",
+            "HTTP-Referer": "https://cashewapp.web.app",
+            "X-Title": "Cashew Budget Review",
+          },
+          body: jsonEncode({
+            "model": activeModel,
+            "messages": [
+              {"role": "system", "content": getSystemPrompt()},
+              {
+                "role": "user",
+                "content": "SMS TO CLASSIFY:\n\"\"\"$rawMessage\"\"\""
+              }
+            ],
+            "response_format": {"type": "json_object"},
+            "temperature": 0.1,
+          }),
+        )
+        .timeout(const Duration(seconds: 12));
+
+    if (response.statusCode == 200) {
+      final jsonBody = jsonDecode(response.body);
+      final text = jsonBody["choices"]?[0]?["message"]?["content"];
       if (text != null) {
         return _parseJsonResponse(text, rawMessage: rawMessage);
       }
