@@ -326,6 +326,13 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
                             labelText: "Model Name (e.g. llama3.2 or gemma2:2b)",
                             bubbly: false,
                           ),
+                          const SizedBox(height: 4),
+                          TextFont(
+                            text:
+                                "Note: Do not use 'localhost' on your phone. Enter your PC's local Wi-Fi IP (e.g. http://192.168.1.50:11434) and set OLLAMA_HOST=0.0.0.0:11434.",
+                            fontSize: 11,
+                            textColor: getColor(context, "textLight"),
+                          ),
                         ],
                       ),
                     ),

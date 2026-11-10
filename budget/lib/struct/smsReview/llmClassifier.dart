@@ -228,7 +228,12 @@ Output ONLY the rule text to append to the system prompt.
         return await _classifyWithOllama(rawMessage, endpoint, model);
       }
     } catch (e) {
-      lastAiError = "$provider connection error: $e";
+      if (provider == "ollama" && e.toString().contains("Connection refused")) {
+        lastAiError =
+            "Ollama connection refused. If running on PC, use your PC's Wi-Fi IP (not 'localhost') and ensure Ollama was started with OLLAMA_HOST=0.0.0.0:11434.";
+      } else {
+        lastAiError = "$provider connection error: $e";
+      }
       debugPrint("Provider $provider classification error: $e");
     }
     return null;
@@ -297,56 +302,132 @@ Output ONLY the rule text to append to the system prompt.
     return _classifyWithEdgeRules(rawMessage);
   }
 
-  /// Google Gemini (Customizable model, e.g. gemini-1.5-flash, gemini-2.0-flash, gemini-1.5-pro)
+  /// Lists available models for this Gemini API key that support generateContent
+  static Future<List<String>> _listGeminiModels(String apiKey) async {
+    final candList = <String>[];
+    for (final apiVersion in ["v1beta", "v1"]) {
+      try {
+        final url = Uri.parse(
+            "https://generativelanguage.googleapis.com/$apiVersion/models?key=$apiKey");
+        final resp = await http.get(url).timeout(const Duration(seconds: 8));
+        if (resp.statusCode == 200) {
+          final data = jsonDecode(resp.body);
+          final models = data["models"] as List?;
+          if (models != null) {
+            for (final m in models) {
+              final name = m["name"]?.toString() ?? "";
+              final methods = (m["supportedGenerationMethods"] as List?)
+                      ?.map((e) => e.toString())
+                      .toList() ??
+                  [];
+              if (methods.contains("generateContent")) {
+                candList.add(name.replaceFirst("models/", ""));
+              }
+            }
+          }
+        }
+        if (candList.isNotEmpty) break;
+      } catch (_) {}
+    }
+    return candList;
+  }
+
+  /// Google Gemini (Customizable model with automatic v1/v1beta fallback & model discovery)
   static Future<LlmClassificationResult?> _classifyWithGemini(
       String rawMessage, String apiKey, {String? model}) async {
-    final activeModel = (model != null && model.isNotEmpty)
+    final requestedModel = (model != null && model.isNotEmpty)
         ? model
-        : "gemini-1.5-flash";
-    final url = Uri.parse(
-        "https://generativelanguage.googleapis.com/v1beta/models/$activeModel:generateContent?key=$apiKey");
+        : (appStateSettings["geminiModel"]?.toString().trim().isNotEmpty == true
+            ? appStateSettings["geminiModel"]!.toString().trim()
+            : "gemini-1.5-flash");
 
-    final response = await http
-        .post(
-          url,
-          headers: {"Content-Type": "application/json"},
-          body: jsonEncode({
-            "contents": [
-              {
-                "parts": [
-                  {
-                    "text": "${getSystemPrompt()}\n\nSMS TO CLASSIFY:\n\"\"\"$rawMessage\"\"\""
-                  }
-                ]
-              }
-            ],
-            "generationConfig": {
-              "temperature": 0.1,
-              "responseMimeType": "application/json",
+    // Try candidate models: requested model first, then common aliases
+    final candidateModels = [
+      requestedModel,
+      if (requestedModel != "gemini-1.5-flash-latest") "gemini-1.5-flash-latest",
+      if (requestedModel != "gemini-2.0-flash-exp") "gemini-2.0-flash-exp",
+      if (requestedModel != "gemini-1.5-flash") "gemini-1.5-flash",
+      if (requestedModel != "gemini-1.5-pro") "gemini-1.5-pro",
+    ];
+
+    for (final candidate in candidateModels) {
+      for (final apiVersion in ["v1beta", "v1"]) {
+        final url = Uri.parse(
+            "https://generativelanguage.googleapis.com/$apiVersion/models/$candidate:generateContent?key=$apiKey");
+
+        final bodyMap = <String, dynamic>{
+          "contents": [
+            {
+              "parts": [
+                {
+                  "text":
+                      "${getSystemPrompt()}\n\nSMS TO CLASSIFY:\n\"\"\"$rawMessage\"\"\""
+                }
+              ]
             }
-          }),
-        )
-        .timeout(const Duration(seconds: 12));
+          ],
+          "generationConfig": {
+            "temperature": 0.1,
+            if (apiVersion == "v1beta") "responseMimeType": "application/json",
+          }
+        };
 
-    if (response.statusCode == 200) {
-      final jsonBody = jsonDecode(response.body);
-      final text = jsonBody["candidates"]?[0]?["content"]?["parts"]?[0]?["text"];
-      if (text != null) {
-        lastAiError = null;
-        return _parseJsonResponse(text,
-            rawMessage: rawMessage, provider: "Gemini ($activeModel)");
+        try {
+          final response = await http
+              .post(
+                url,
+                headers: {"Content-Type": "application/json"},
+                body: jsonEncode(bodyMap),
+              )
+              .timeout(const Duration(seconds: 12));
+
+          if (response.statusCode == 200) {
+            final jsonBody = jsonDecode(response.body);
+            final text = jsonBody["candidates"]?[0]?["content"]?["parts"]?[0]?["text"];
+            if (text != null) {
+              lastAiError = null;
+              if (candidate != requestedModel) {
+                await updateSettings("geminiModel", candidate,
+                    updateGlobalState: false);
+              }
+              return _parseJsonResponse(text,
+                  rawMessage: rawMessage, provider: "Gemini ($candidate)");
+            }
+          } else if (response.statusCode == 404) {
+            // Model not supported on this version, try next version or candidate
+            continue;
+          } else {
+            String detail = "Gemini HTTP ${response.statusCode}";
+            try {
+              final errJson = jsonDecode(response.body);
+              final msg = errJson["error"]?["message"];
+              if (msg != null) detail = "Gemini: $msg";
+            } catch (_) {
+              detail = "Gemini HTTP ${response.statusCode}: ${response.body}";
+            }
+            lastAiError = detail;
+            debugPrint("Gemini classification failed: $detail");
+            return null;
+          }
+        } catch (e) {
+          debugPrint("Gemini attempt error for $candidate ($apiVersion): $e");
+        }
       }
-    } else {
-      String detail = "Gemini HTTP ${response.statusCode}";
-      try {
-        final errJson = jsonDecode(response.body);
-        final msg = errJson["error"]?["message"];
-        if (msg != null) detail = "Gemini: $msg";
-      } catch (_) {
-        detail = "Gemini HTTP ${response.statusCode}: ${response.body}";
+    }
+
+    // If all candidate attempts failed, query the user's available model list
+    try {
+      final available = await _listGeminiModels(apiKey);
+      if (available.isNotEmpty) {
+        lastAiError =
+            "Model '$requestedModel' not found. Available models for your API key: ${available.take(4).join(', ')}. Please select one in AI Settings.";
+      } else {
+        lastAiError =
+            "Gemini API key is invalid or Generative Language API is not enabled in your Google Cloud / AI Studio project.";
       }
-      lastAiError = detail;
-      debugPrint("Gemini classification failed: $detail");
+    } catch (_) {
+      lastAiError =
+          "Gemini: models/$requestedModel not found or not supported for generateContent.";
     }
     return null;
   }
@@ -462,6 +543,13 @@ Output ONLY the rule text to append to the system prompt.
   /// Local Open-Source Ollama (Llama 3.2, Gemma 2, Qwen 2.5)
   static Future<LlmClassificationResult?> _classifyWithOllama(
       String rawMessage, String endpoint, String model) async {
+    if (endpoint.contains("localhost") || endpoint.contains("127.0.0.1")) {
+      lastAiError =
+          "Ollama: 'localhost' cannot be reached from an Android phone. Use your computer's local Wi-Fi IP (e.g. http://192.168.1.X:11434) and launch Ollama with OLLAMA_HOST=0.0.0.0:11434.";
+      debugPrint("Ollama classification skipped: $lastAiError");
+      return null;
+    }
+
     final baseUri = endpoint.endsWith("/")
         ? endpoint.substring(0, endpoint.length - 1)
         : endpoint;
