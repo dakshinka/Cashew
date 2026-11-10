@@ -20,12 +20,99 @@ class ReviewManager {
 
   final List<ReviewTransaction> _items = [];
   final ValueNotifier<int> pendingCountNotifier = ValueNotifier<int>(0);
+  final ValueNotifier<int> ignoredCountNotifier = ValueNotifier<int>(0);
   bool _initialized = false;
 
   List<ReviewTransaction> get pendingTransactions =>
       List.unmodifiable(_items.where((i) => i.status == ReviewStatus.pending));
 
+  List<ReviewTransaction> get ignoredMessages =>
+      List.unmodifiable(_items.where((i) => i.status == ReviewStatus.ignored));
+
   List<ReviewTransaction> get allTransactions => List.unmodifiable(_items);
+
+  static const String _kAccountBindingsKey = "smsAccountWalletBindings";
+
+  /// Gets the map of raw account hints/digits -> bound walletPk
+  Map<String, String> getAccountBindings() {
+    final raw = appStateSettings[_kAccountBindingsKey]?.toString();
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        return Map<String, String>.from(decoded);
+      }
+    } catch (_) {}
+    return {};
+  }
+
+  /// Saves account binding mapping
+  Future<void> saveAccountBinding(String accountPattern, String walletPk) async {
+    final bindings = getAccountBindings();
+    bindings[accountPattern.toLowerCase().trim()] = walletPk;
+    final digits = accountPattern.replaceAll(RegExp(r'\D'), '');
+    if (digits.length >= 3) {
+      bindings[digits] = walletPk;
+    }
+    await updateSettings(_kAccountBindingsKey, jsonEncode(bindings),
+        updateGlobalState: false);
+  }
+
+  /// Bind wallet for account across past, present, and future transactions
+  Future<void> updateWalletForAccount({
+    required String accountHint,
+    required String walletPk,
+    required String walletName,
+    bool applyEverywhere = true,
+  }) async {
+    final normalized = canonicalizeAccountName(accountHint);
+    final digits = accountHint.replaceAll(RegExp(r'\D'), '');
+
+    if (applyEverywhere) {
+      await saveAccountBinding(accountHint, walletPk);
+      if (digits.length >= 3) {
+        await saveAccountBinding(digits, walletPk);
+      }
+    }
+
+    // 1. Update all matching pending review transactions
+    for (final item in _items) {
+      if (item.status == ReviewStatus.pending) {
+        final itemHint = item.accountHint ?? "";
+        final itemDigits = itemHint.replaceAll(RegExp(r'\D'), '');
+        if (itemHint.toLowerCase() == accountHint.toLowerCase() ||
+            canonicalizeAccountName(itemHint).toLowerCase() ==
+                normalized.toLowerCase() ||
+            (digits.isNotEmpty && itemDigits == digits)) {
+          item.suggestedWalletPk = walletPk;
+          item.accountHint = walletName;
+        }
+      }
+    }
+    await saveToStorage();
+
+    // 2. If applyEverywhere, update matching past transactions in the database!
+    if (applyEverywhere) {
+      try {
+        final allTxns = await database.allTransactions;
+        for (final t in allTxns) {
+          final note = t.note;
+          if (note.toLowerCase().contains(accountHint.toLowerCase()) ||
+              (digits.isNotEmpty &&
+                  digits.length >= 3 &&
+                  note.contains(digits))) {
+            if (t.walletFk != walletPk) {
+              await database.createOrUpdateTransaction(
+                t.copyWith(walletFk: walletPk),
+              );
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint("Error updating past transactions for account: $e");
+      }
+    }
+  }
 
   /// Initialize and load saved unreviewed transactions from disk
   Future<void> init() async {
@@ -43,31 +130,19 @@ class ReviewManager {
         _items.clear();
         for (final item in list) {
           final tx = ReviewTransaction.fromJson(item as Map<String, dynamic>);
-          // Self-heal pending items: drop non-transactions (like e-mandates) and re-extract correct account hints
-          if (tx.status == ReviewStatus.pending && tx.rawMessage.isNotEmpty) {
+          // Self-heal items: re-extract correct account hints, convert future notices/e-mandates to ignored tab
+          if (tx.rawMessage.isNotEmpty) {
             if (SmsParser.isInformationalOrFutureNotice(tx.rawMessage)) {
-              // Discard future e-mandates, scheduled notices, and non-transactions
-              continue;
-            }
-            final parsed = SmsParser.parse(tx.rawMessage);
-            if (!parsed.success || parsed.amount <= 0) {
-              continue;
-            }
-            if ((tx.amount - parsed.amount).abs() > 0.01) {
-              tx.amount = parsed.amount;
-            }
-            tx.currency = parsed.currency;
-            final clean = AiCategorizer.cleanMerchantName(parsed.rawMerchant);
-            if (clean.isNotEmpty && clean != "Other") {
-              tx.cleanMerchant = clean;
-            }
-            final fixedHint =
-                SmsParser.extractAccountHint(tx.rawMessage, amount: tx.amount);
-            if (fixedHint != null && fixedHint.isNotEmpty) {
-              tx.accountHint = canonicalizeAccountName(fixedHint);
-            } else if (parsed.accountHint != null &&
-                parsed.accountHint!.isNotEmpty) {
-              tx.accountHint = canonicalizeAccountName(parsed.accountHint!);
+              if (tx.status == ReviewStatus.pending) {
+                // Move future e-mandates and scheduled notices to ignored tab
+                tx.status = ReviewStatus.ignored;
+              }
+            } else if (tx.status == ReviewStatus.pending) {
+              final fixedHint =
+                  SmsParser.extractAccountHint(tx.rawMessage, amount: tx.amount);
+              if (fixedHint != null && fixedHint.isNotEmpty) {
+                tx.accountHint = canonicalizeAccountName(fixedHint);
+              }
             }
           }
           _items.add(tx);
@@ -95,6 +170,8 @@ class ReviewManager {
   void _updateCount() {
     pendingCountNotifier.value =
         _items.where((i) => i.status == ReviewStatus.pending).length;
+    ignoredCountNotifier.value =
+        _items.where((i) => i.status == ReviewStatus.ignored).length;
   }
 
   /// Process multiple SMS or notification messages at once
@@ -110,10 +187,96 @@ class ReviewManager {
     return results;
   }
 
+  void _recordIgnoredMessage(String rawMessage,
+      {String? reason, DateTime? overrideDate}) {
+    if (_items.any((i) => i.rawMessage.trim() == rawMessage.trim())) return;
+    final extractedAmount =
+        SmsParser.extractAmountFromText(rawMessage) ?? 0.0;
+    final ignoredItem = ReviewTransaction(
+      rawMessage: rawMessage,
+      extractedTitle: "Ignored SMS",
+      cleanMerchant: "Non-Transaction",
+      amount: extractedAmount,
+      date: overrideDate ?? SmsParser.extractDate(rawMessage),
+      isIncome: false,
+      suggestedCategoryName: "Other",
+      status: ReviewStatus.ignored,
+      ignoredReason: reason ?? "Filtered non-transaction",
+    );
+    _items.insert(0, ignoredItem);
+    saveToStorage();
+    _updateCount();
+  }
+
+  /// Converts an ignored / non-transaction SMS into an active pending review transaction,
+  /// and asks the AI to learn why this message was previously missed.
+  Future<ReviewTransaction?> convertIgnoredToTransaction(
+      ReviewTransaction item) async {
+    final parsed = SmsParser.parse(item.rawMessage);
+    double amt = item.amount > 0
+        ? item.amount
+        : (parsed.amount > 0
+            ? parsed.amount
+            : (SmsParser.extractAmountFromText(item.rawMessage) ?? 0.0));
+    final lower = item.rawMessage.toLowerCase();
+    bool isIncome = parsed.isIncome ||
+        lower.contains("deposited") ||
+        lower.contains("depoisited") ||
+        lower.contains("credited") ||
+        lower.contains("salary");
+    String merchant = parsed.rawMerchant.isNotEmpty &&
+            parsed.rawMerchant != "Bank Transfer"
+        ? parsed.rawMerchant
+        : SmsParser.extractMerchant(item.rawMessage, isCredit: isIncome);
+    String cleanMerchant = AiCategorizer.cleanMerchantName(merchant);
+    String? accountHint = parsed.accountHint ??
+        SmsParser.extractAccountHint(item.rawMessage, amount: amt);
+
+    item.amount = amt;
+    item.isIncome = isIncome;
+    item.cleanMerchant = cleanMerchant.isNotEmpty
+        ? cleanMerchant
+        : (isIncome ? "Salary / Credit" : "Expense");
+    if (accountHint != null && accountHint.isNotEmpty) {
+      item.accountHint = canonicalizeAccountName(accountHint);
+    }
+    item.date = parsed.date;
+    item.status = ReviewStatus.pending;
+    item.confidence = 1.0;
+
+    // Call LLM to learn why this transaction was missed and generate permanent rule
+    try {
+      await LlmClassifier.teachMissedTransaction(item.rawMessage);
+    } catch (_) {}
+
+    await saveToStorage();
+    _updateCount();
+    return item;
+  }
+
+  Future<void> deleteIgnored(ReviewTransaction item) async {
+    _items.removeWhere((i) => i.id == item.id);
+    await saveToStorage();
+    _updateCount();
+  }
+
+  Future<void> clearAllIgnored() async {
+    _items.removeWhere((i) => i.status == ReviewStatus.ignored);
+    await saveToStorage();
+    _updateCount();
+  }
+
   /// Process an incoming raw message string (SMS, WhatsApp, Push Notification)
   Future<ReviewTransaction?> processRawMessage(String rawMessage, {DateTime? overrideDate}) async {
     final provider = appStateSettings["aiProvider"]?.toString() ?? "none";
+    final hasNumbers = RegExp(r'\d{2,}').hasMatch(rawMessage);
+
     if (SmsParser.isInformationalOrFutureNotice(rawMessage)) {
+      if (hasNumbers) {
+        _recordIgnoredMessage(rawMessage,
+            reason: "Informational notice or future reminder",
+            overrideDate: overrideDate);
+      }
       return null;
     }
 
@@ -125,35 +288,83 @@ class ReviewManager {
       final llmResult = await LlmClassifier.classify(rawMessage);
       if (llmResult != null) {
         if (!llmResult.isTransaction || llmResult.amount <= 0) {
-          // AI correctly classified as advertisement, balance inquiry, or spam!
-          return null;
+          // Double check with deterministic parser before discarding!
+          final fallback = SmsParser.parse(rawMessage);
+          if (fallback.success && fallback.amount > 0) {
+            // Overrule AI hallucination: deterministic parser found an actual deposit/withdrawal!
+            reviewItem = await SmsParser.createReviewTransaction(
+              rawMessage,
+              overrideDate: overrideDate ?? fallback.date,
+            );
+          } else {
+            if (hasNumbers) {
+              _recordIgnoredMessage(rawMessage,
+                  reason: llmResult.reasoning ??
+                      "Classified by AI as non-transaction",
+                  overrideDate: overrideDate);
+            }
+            return null;
+          }
+        } else {
+          // Reject future notices / mandates hallucinated by LLM as transactions
+          if (SmsParser.isInformationalOrFutureNotice(rawMessage)) {
+            if (hasNumbers) {
+              _recordIgnoredMessage(rawMessage,
+                  reason: "E-Mandate / Future scheduled notice",
+                  overrideDate: overrideDate);
+            }
+            return null;
+          }
+
+          effectiveDate = overrideDate ?? llmResult.date ?? SmsParser.extractDate(rawMessage);
+          final cleanTitle = AiCategorizer.cleanMerchantName(llmResult.merchant);
+          final aiSuggestion = await AiCategorizer.suggestCategory(cleanTitle, isIncome: llmResult.transactionType == "credit");
+
+          // Ground accountHint with regex on the actual message text to prevent hallucinations
+          final regexHint = SmsParser.extractAccountHint(rawMessage, amount: llmResult.amount);
+          String? resolvedHint;
+          if (regexHint != null && regexHint.isNotEmpty) {
+            resolvedHint = canonicalizeAccountName(regexHint);
+          } else if (llmResult.accountHint != null && llmResult.accountHint!.isNotEmpty) {
+            final cand = llmResult.accountHint!;
+            final amtStr = llmResult.amount.toInt().toString();
+            final candDigits = cand.replaceAll(RegExp(r'\D'), '');
+            final isAmountInHint = amtStr.length >= 3 && candDigits == amtStr;
+            final isMerchantInHint = cleanTitle.length >= 4 && cand.toLowerCase().contains(cleanTitle.toLowerCase());
+            if (!isAmountInHint && !isMerchantInHint) {
+              resolvedHint = canonicalizeAccountName(cand);
+            }
+          }
+
+          reviewItem = ReviewTransaction(
+            rawMessage: rawMessage,
+            extractedTitle: llmResult.merchant,
+            cleanMerchant: cleanTitle,
+            amount: llmResult.amount,
+            currency: llmResult.currency,
+            date: effectiveDate,
+            isIncome: llmResult.transactionType == "credit",
+            suggestedCategoryName: llmResult.category != "Other" ? llmResult.category : aiSuggestion.categoryName,
+            suggestedCategoryPk: aiSuggestion.categoryPk,
+            confidence: llmResult.confidence,
+            accountHint: resolvedHint,
+            isReminder: llmResult.isReminder,
+          );
         }
-
-        effectiveDate = overrideDate ?? llmResult.date ?? SmsParser.extractDate(rawMessage);
-        final cleanTitle = AiCategorizer.cleanMerchantName(llmResult.merchant);
-        final aiSuggestion = await AiCategorizer.suggestCategory(cleanTitle, isIncome: llmResult.transactionType == "credit");
-
-        reviewItem = ReviewTransaction(
-          rawMessage: rawMessage,
-          extractedTitle: llmResult.merchant,
-          cleanMerchant: cleanTitle,
-          amount: llmResult.amount,
-          currency: llmResult.currency,
-          date: effectiveDate,
-          isIncome: llmResult.transactionType == "credit",
-          suggestedCategoryName: llmResult.category != "Other" ? llmResult.category : aiSuggestion.categoryName,
-          suggestedCategoryPk: aiSuggestion.categoryPk,
-          confidence: llmResult.confidence,
-          accountHint: llmResult.accountHint,
-          isReminder: llmResult.isReminder,
-        );
       }
     }
 
     // 2. Fallback to enhanced deterministic edge rule parser
     if (reviewItem == null) {
       final parsed = SmsParser.parse(rawMessage);
-      if (!parsed.success) return null;
+      if (!parsed.success) {
+        if (hasNumbers) {
+          _recordIgnoredMessage(rawMessage,
+              reason: "No transaction keyword recognized",
+              overrideDate: overrideDate);
+        }
+        return null;
+      }
       effectiveDate = overrideDate ?? parsed.date;
 
       reviewItem = await SmsParser.createReviewTransaction(
@@ -176,13 +387,13 @@ class ReviewManager {
     try {
       final allTxns = await database.allTransactions;
       final start = effectiveDate!.subtract(const Duration(days: 1));
-      final end = effectiveDate!.add(const Duration(days: 1));
+      final end = effectiveDate.add(const Duration(days: 1));
       final alreadyInDb = allTxns.any((t) =>
           t.dateCreated.isAfter(start) &&
           t.dateCreated.isBefore(end) &&
           (t.amount.abs() - reviewItem!.amount.abs()).abs() < 0.01 &&
           (t.name.toLowerCase() == reviewItem.cleanMerchant.toLowerCase() ||
-              (t.note != null && t.note!.contains(rawMessage.trim()))));
+              t.note.contains(rawMessage.trim())));
       if (alreadyInDb) return null;
     } catch (_) {}
 
@@ -194,6 +405,16 @@ class ReviewManager {
           findMatchingWallet(wallets, reviewItem.accountHint!);
       if (matchingWallet != null) {
         reviewItem.suggestedWalletPk = matchingWallet.walletPk;
+      }
+
+      // Check persistent account bindings (binded accounts)
+      final bindings = getAccountBindings();
+      final hintLower = reviewItem.accountHint!.toLowerCase().trim();
+      final digits = hintLower.replaceAll(RegExp(r'\D'), '');
+      if (bindings.containsKey(hintLower)) {
+        reviewItem.suggestedWalletPk = bindings[hintLower];
+      } else if (digits.isNotEmpty && bindings.containsKey(digits)) {
+        reviewItem.suggestedWalletPk = bindings[digits];
       }
     }
 
@@ -265,7 +486,7 @@ class ReviewManager {
             t.dateCreated.isBefore(end) &&
             (t.amount.abs() - item.amount.abs()).abs() < 0.01 &&
             (t.name.toLowerCase() == item.cleanMerchant.toLowerCase() ||
-                (t.note != null && t.note!.contains(item.rawMessage.trim()))));
+                t.note.contains(item.rawMessage.trim())));
         if (alreadyLogged) {
           item.status = ReviewStatus.approved;
           await saveToStorage();

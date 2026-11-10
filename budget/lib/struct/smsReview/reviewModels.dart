@@ -6,6 +6,7 @@ enum ReviewStatus {
   pending,
   approved,
   dismissed,
+  ignored, // Captured as non-transaction / informational / other SMS with numbers
 }
 
 class ReviewTransaction {
@@ -16,7 +17,7 @@ class ReviewTransaction {
   double amount;
   String currency;
   DateTime date;
-  final bool isIncome;
+  bool isIncome;
   String suggestedCategoryName;
   String? suggestedCategoryPk;
   double confidence;
@@ -24,6 +25,7 @@ class ReviewTransaction {
   String? suggestedWalletPk;
   ReviewStatus status;
   final bool isReminder;
+  final String? ignoredReason;
   final DateTime timestamp;
 
   String get displayCurrency {
@@ -47,6 +49,7 @@ class ReviewTransaction {
     this.suggestedWalletPk,
     this.status = ReviewStatus.pending,
     this.isReminder = false,
+    this.ignoredReason,
     DateTime? timestamp,
   })  : id = id ?? _uuid.v4(),
         timestamp = timestamp ?? DateTime.now();
@@ -67,6 +70,7 @@ class ReviewTransaction {
         'suggestedWalletPk': suggestedWalletPk,
         'status': status.index,
         'isReminder': isReminder,
+        'ignoredReason': ignoredReason,
         'timestamp': timestamp.toIso8601String(),
       };
 
@@ -91,6 +95,7 @@ class ReviewTransaction {
         status: ReviewStatus
             .values[(json['status'] as int?) ?? ReviewStatus.pending.index],
         isReminder: json['isReminder'] as bool? ?? false,
+        ignoredReason: json['ignoredReason'] as String?,
         timestamp: json['timestamp'] != null
             ? DateTime.parse(json['timestamp'] as String)
             : DateTime.now(),

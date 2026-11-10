@@ -33,6 +33,7 @@ class ReviewInboxPage extends StatefulWidget {
 class _ReviewInboxPageState extends State<ReviewInboxPage> {
   bool _isLoading = false;
   bool? _isNotificationAccessGranted;
+  int _selectedTabIndex = 0; // 0: Transactions, 1: Other SMS
 
   @override
   void initState() {
@@ -766,6 +767,7 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
   @override
   Widget build(BuildContext context) {
     final pending = ReviewManager.instance.pendingTransactions;
+    final ignored = ReviewManager.instance.ignoredMessages;
 
     return PageFramework(
       title: "Review Inbox",
@@ -786,14 +788,14 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
           icon: const Icon(Icons.paste_rounded),
           onPressed: _showPasteSmsDialog,
         ),
-        if (pending.isNotEmpty)
+        if (_selectedTabIndex == 0 && pending.isNotEmpty)
           IconButton(
-            tooltip: "Clear All",
+            tooltip: "Clear All Transactions",
             icon: const Icon(Icons.delete_sweep_outlined),
             onPressed: () {
               openPopup(
                 context,
-                title: "Clear Inbox?",
+                title: "Clear Transactions?",
                 description:
                     "This will dismiss all pending review transactions.",
                 icon: Icons.delete_outline,
@@ -804,9 +806,39 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
                   setState(() {});
                   openSnackbar(
                     SnackbarMessage(
-                      title: "Inbox Cleared",
+                      title: "Transactions Cleared",
                       description:
                           "All pending review transactions were dismissed.",
+                      icon: Icons.check_circle_outline,
+                    ),
+                  );
+                },
+                onCancelLabel: "Cancel",
+                onCancel: () => Navigator.of(context).pop(),
+              );
+            },
+          )
+        else if (_selectedTabIndex == 1 && ignored.isNotEmpty)
+          IconButton(
+            tooltip: "Clear Other SMS",
+            icon: const Icon(Icons.delete_sweep_outlined),
+            onPressed: () {
+              openPopup(
+                context,
+                title: "Clear Other SMS?",
+                description:
+                    "This will remove all non-transaction filtered SMS messages.",
+                icon: Icons.delete_outline,
+                onSubmitLabel: "Clear",
+                onSubmit: () async {
+                  Navigator.of(context).pop();
+                  await ReviewManager.instance.clearAllIgnored();
+                  setState(() {});
+                  openSnackbar(
+                    SnackbarMessage(
+                      title: "Other SMS Cleared",
+                      description:
+                          "All non-transaction SMS messages were dismissed.",
                       icon: Icons.check_circle_outline,
                     ),
                   );
@@ -889,139 +921,340 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
             ),
           ),
 
-        // Summary & Fast Action Header
+        // Two-Tab Switcher: Transactions vs Other SMS
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+          padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 6.0),
           child: Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(4),
             decoration: BoxDecoration(
               color: getColor(context, "canvasContainer"),
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(14),
               border: Border.all(
-                color: getColor(context, "dividerColor").withOpacity(0.4),
+                color: getColor(context, "dividerColor").withOpacity(0.5),
               ),
             ),
             child: Row(
               children: [
-                Container(
-                  padding: const EdgeInsetsDirectional.all(12),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .primary
-                        .withOpacity(0.12),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    Icons.mark_email_unread_rounded,
-                    color: Theme.of(context).colorScheme.primary,
-                    size: 26,
-                  ),
-                ),
-                const SizedBox(width: 14),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      TextFont(
-                        text: "${pending.length} Pending Review",
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(10),
+                    onTap: () => setState(() => _selectedTabIndex = 0),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      decoration: BoxDecoration(
+                        color: _selectedTabIndex == 0
+                            ? Theme.of(context).colorScheme.primary
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(10),
                       ),
-                      const SizedBox(height: 2),
-                      TextFont(
-                        text: "AI parses your SMS & categorizes spend",
-                        fontSize: 13,
-                        textColor: getColor(context, "textLight"),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.receipt_long_rounded,
+                            size: 18,
+                            color: _selectedTabIndex == 0
+                                ? Theme.of(context).colorScheme.onPrimary
+                                : getColor(context, "textLight"),
+                          ),
+                          const SizedBox(width: 8),
+                          TextFont(
+                            text: "Transactions (${pending.length})",
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            textColor: _selectedTabIndex == 0
+                                ? Theme.of(context).colorScheme.onPrimary
+                                : getColor(context, "textLight"),
+                          ),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
                 ),
-                if (pending.isNotEmpty)
-                  Button(
-                    label: "Approve All",
-                    icon: Icons.done_all_rounded,
-                    color: Theme.of(context).colorScheme.primary,
-                    textColor: Theme.of(context).colorScheme.onPrimary,
-                    padding: const EdgeInsetsDirectional.symmetric(
-                        horizontal: 12, vertical: 8),
-                    fontSize: 13,
-                    onTap: () async {
-                      final approvedCount =
-                          await ReviewManager.instance.approveAll();
-                      setState(() {});
-                      openSnackbar(
-                        SnackbarMessage(
-                          title: "Transactions Approved",
-                          description:
-                              "Logged $approvedCount transactions to your accounts.",
-                          icon: Icons.check_circle_outline,
-                        ),
-                      );
-                    },
+                const SizedBox(width: 6),
+                Expanded(
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(10),
+                    onTap: () => setState(() => _selectedTabIndex = 1),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      decoration: BoxDecoration(
+                        color: _selectedTabIndex == 1
+                            ? Theme.of(context).colorScheme.primary
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.mark_chat_read_rounded,
+                            size: 18,
+                            color: _selectedTabIndex == 1
+                                ? Theme.of(context).colorScheme.onPrimary
+                                : getColor(context, "textLight"),
+                          ),
+                          const SizedBox(width: 8),
+                          TextFont(
+                            text: "Other SMS (${ignored.length})",
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            textColor: _selectedTabIndex == 1
+                                ? Theme.of(context).colorScheme.onPrimary
+                                : getColor(context, "textLight"),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
+                ),
               ],
             ),
           ),
         ),
 
-        // List of Pending Items
-        if (pending.isEmpty)
+        // TAB 1: PENDING TRANSACTIONS
+        if (_selectedTabIndex == 0) ...[
+          // Summary & Fast Action Header
           Padding(
-            padding: const EdgeInsets.symmetric(vertical: 60.0, horizontal: 24),
-            child: Center(
-              child: Column(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: getColor(context, "canvasContainer"),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: getColor(context, "dividerColor").withOpacity(0.4),
+                ),
+              ),
+              child: Row(
                 children: [
-                  Icon(
-                    Icons.done_all_rounded,
-                    size: 64,
-                    color: getColor(context, "textLight").withOpacity(0.5),
+                  Container(
+                    padding: const EdgeInsetsDirectional.all(12),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .primary
+                          .withOpacity(0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      Icons.mark_email_unread_rounded,
+                      color: Theme.of(context).colorScheme.primary,
+                      size: 26,
+                    ),
                   ),
-                  const SizedBox(height: 16),
-                  TextFont(
-                    text: "All Caught Up!",
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                  const SizedBox(height: 8),
-                  TextFont(
-                    text:
-                        "No pending transactions in your inbox. When new SMS or payment notifications arrive, they will appear here for one-tap review.",
-                    textAlign: TextAlign.center,
-                    fontSize: 14,
-                    textColor: getColor(context, "textLight"),
-                  ),
-                  const SizedBox(height: 24),
-                  Wrap(
-                    alignment: WrapAlignment.center,
-                    spacing: 12,
-                    runSpacing: 10,
-                    children: [
-                      if (getPlatform(ignoreEmulation: true) ==
-                          PlatformOS.isAndroid)
-                        Button(
-                          label: "Scan SMS Inbox",
-                          icon: Icons.history_rounded,
-                          color: Theme.of(context).colorScheme.primary,
-                          textColor: Theme.of(context).colorScheme.onPrimary,
-                          onTap: _showScanPreviousSmsDialog,
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        TextFont(
+                          text: "${pending.length} Pending Review",
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
                         ),
-                      Button(
-                        label: "Paste SMS",
-                        icon: Icons.paste_rounded,
-                        color: Theme.of(context).colorScheme.secondaryContainer,
-                        textColor:
-                            Theme.of(context).colorScheme.onSecondaryContainer,
-                        onTap: _showPasteSmsDialog,
-                      ),
-                    ],
+                        const SizedBox(height: 2),
+                        TextFont(
+                          text: "AI parses your SMS & categorizes spend",
+                          fontSize: 13,
+                          textColor: getColor(context, "textLight"),
+                        ),
+                      ],
+                    ),
                   ),
+                  if (pending.isNotEmpty)
+                    Button(
+                      label: "Approve All",
+                      icon: Icons.done_all_rounded,
+                      color: Theme.of(context).colorScheme.primary,
+                      textColor: Theme.of(context).colorScheme.onPrimary,
+                      padding: const EdgeInsetsDirectional.symmetric(
+                          horizontal: 12, vertical: 8),
+                      fontSize: 13,
+                      onTap: () async {
+                        final approvedCount =
+                            await ReviewManager.instance.approveAll();
+                        setState(() {});
+                        openSnackbar(
+                          SnackbarMessage(
+                            title: "Transactions Approved",
+                            description:
+                                "Logged $approvedCount transactions to your accounts.",
+                            icon: Icons.check_circle_outline,
+                          ),
+                        );
+                      },
+                    ),
                 ],
               ),
             ),
-          )
-        else
-          ...pending.map((item) => _buildReviewCard(item)).toList(),
+          ),
+
+          // List of Pending Items
+          if (pending.isEmpty)
+            Padding(
+              padding:
+                  const EdgeInsets.symmetric(vertical: 60.0, horizontal: 24),
+              child: Center(
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.done_all_rounded,
+                      size: 64,
+                      color: getColor(context, "textLight").withOpacity(0.5),
+                    ),
+                    const SizedBox(height: 16),
+                    TextFont(
+                      text: "All Caught Up!",
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    const SizedBox(height: 8),
+                    TextFont(
+                      text:
+                          "No pending transactions in your inbox. When new SMS or payment notifications arrive, they will appear here for one-tap review.",
+                      textAlign: TextAlign.center,
+                      fontSize: 14,
+                      textColor: getColor(context, "textLight"),
+                    ),
+                    const SizedBox(height: 24),
+                    Wrap(
+                      alignment: WrapAlignment.center,
+                      spacing: 12,
+                      runSpacing: 10,
+                      children: [
+                        if (getPlatform(ignoreEmulation: true) ==
+                            PlatformOS.isAndroid)
+                          Button(
+                            label: "Scan SMS Inbox",
+                            icon: Icons.history_rounded,
+                            color: Theme.of(context).colorScheme.primary,
+                            textColor: Theme.of(context).colorScheme.onPrimary,
+                            onTap: _showScanPreviousSmsDialog,
+                          ),
+                        Button(
+                          label: "Paste SMS",
+                          icon: Icons.paste_rounded,
+                          color:
+                              Theme.of(context).colorScheme.secondaryContainer,
+                          textColor: Theme.of(context)
+                              .colorScheme
+                              .onSecondaryContainer,
+                          onTap: _showPasteSmsDialog,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else
+            ...pending.map((item) => _buildReviewCard(item)).toList(),
+        ] else ...[
+          // TAB 2: OTHER / IGNORED SMS WITH NUMBERS
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: getColor(context, "canvasContainer"),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: getColor(context, "dividerColor").withOpacity(0.4),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsetsDirectional.all(12),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .secondary
+                          .withOpacity(0.12),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      Icons.filter_alt_outlined,
+                      color: Theme.of(context).colorScheme.secondary,
+                      size: 26,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        TextFont(
+                          text: "${ignored.length} Other SMS",
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        const SizedBox(height: 2),
+                        TextFont(
+                          text:
+                              "Non-transactions, e-mandates & alerts. Tap 'Convert & Teach AI' if missed.",
+                          fontSize: 12,
+                          maxLines: 2,
+                          textColor: getColor(context, "textLight"),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (ignored.isNotEmpty)
+                    Button(
+                      label: "Clear All",
+                      icon: Icons.delete_sweep_rounded,
+                      color: Theme.of(context).colorScheme.secondaryContainer,
+                      textColor:
+                          Theme.of(context).colorScheme.onSecondaryContainer,
+                      padding: const EdgeInsetsDirectional.symmetric(
+                          horizontal: 12, vertical: 8),
+                      fontSize: 13,
+                      onTap: () async {
+                        await ReviewManager.instance.clearAllIgnored();
+                        setState(() {});
+                      },
+                    ),
+                ],
+              ),
+            ),
+          ),
+
+          if (ignored.isEmpty)
+            Padding(
+              padding:
+                  const EdgeInsets.symmetric(vertical: 60.0, horizontal: 24),
+              child: Center(
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.check_circle_outline_rounded,
+                      size: 64,
+                      color: getColor(context, "textLight").withOpacity(0.5),
+                    ),
+                    const SizedBox(height: 16),
+                    TextFont(
+                      text: "No Other SMS",
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    const SizedBox(height: 8),
+                    TextFont(
+                      text:
+                          "Messages with numbers filtered out as future e-mandates, balance updates, or promotional notices will appear here.",
+                      textAlign: TextAlign.center,
+                      fontSize: 14,
+                      textColor: getColor(context, "textLight"),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else
+            ...ignored.map((item) => _buildIgnoredCard(item)).toList(),
+        ],
 
         const SizedBox(height: 40),
       ],
@@ -1111,6 +1344,52 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
         item.suggestedCategoryPk = cat.categoryPk;
         item.confidence = 1.0;
         await ReviewManager.instance.saveToStorage();
+        setState(() {});
+      },
+    );
+  }
+
+  void _promptAccountBindingEverywhere(
+      ReviewTransaction item, String? walletPk) {
+    final hint = item.accountHint?.trim();
+    if (hint == null || hint.isEmpty) {
+      ReviewManager.instance.saveToStorage();
+      setState(() {});
+      return;
+    }
+
+    openPopup(
+      context,
+      title: "Apply Account Binding Everywhere?",
+      description:
+          "Do you want to bind '$hint' to this wallet for all past database transactions, other pending SMSes, and all future incoming messages?",
+      icon: Icons.sync_alt_rounded,
+      onSubmitLabel: "Apply to All",
+      onSubmit: () async {
+        Navigator.of(context).pop();
+        await ReviewManager.instance.updateWalletForAccount(
+          accountHint: hint,
+          walletPk: walletPk,
+          applyEverywhere: true,
+        );
+        setState(() {});
+        openSnackbar(
+          SnackbarMessage(
+            title: "Account Bound Everywhere",
+            description:
+                "Mapped '$hint' to this wallet for past, present, and future transactions.",
+            icon: Icons.check_circle_outline,
+          ),
+        );
+      },
+      onCancelLabel: "Only This Transaction",
+      onCancel: () async {
+        Navigator.of(context).pop();
+        await ReviewManager.instance.updateWalletForAccount(
+          accountHint: hint,
+          walletPk: walletPk,
+          applyEverywhere: false,
+        );
         setState(() {});
       },
     );
@@ -1215,9 +1494,9 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
                               item.accountHint =
                                   ReviewManager.canonicalizeAccountName(newName);
                               item.suggestedWalletPk = selectedWalletPk;
-                              await ReviewManager.instance.saveToStorage();
                               Navigator.of(dialogContext).pop();
-                              setState(() {});
+                              _promptAccountBindingEverywhere(
+                                  item, selectedWalletPk);
                             }
                           },
                         ),
@@ -1425,6 +1704,135 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
     );
 
     return confirmed;
+  }
+
+  Widget _buildIgnoredCard(ReviewTransaction item) {
+    final theme = Theme.of(context);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 6.0),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: getColor(context, "canvasContainer"),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: getColor(context, "dividerColor").withOpacity(0.4),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Top Row: Tag / Reason & Date
+            Row(
+              children: [
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color:
+                        theme.colorScheme.secondaryContainer.withOpacity(0.5),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.info_outline_rounded,
+                        size: 13,
+                        color: theme.colorScheme.onSecondaryContainer,
+                      ),
+                      const SizedBox(width: 4),
+                      TextFont(
+                        text: item.ignoredReason ?? "Non-Transaction Alert",
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        textColor: theme.colorScheme.onSecondaryContainer,
+                      ),
+                    ],
+                  ),
+                ),
+                const Spacer(),
+                TextFont(
+                  text: DateFormat('dd MMM, hh:mm a').format(item.date),
+                  fontSize: 12,
+                  textColor: getColor(context, "textLight"),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+
+            // Message text container
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: theme.scaffoldBackgroundColor.withOpacity(0.6),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: getColor(context, "dividerColor").withOpacity(0.3),
+                ),
+              ),
+              child: SelectableText(
+                item.rawMessage,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  height: 1.4,
+                  color: getColor(context, "black"),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // Action Row: "Convert & Teach AI" and "Dismiss"
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                IconButton(
+                  tooltip: "Dismiss",
+                  icon: Icon(
+                    Icons.delete_outline_rounded,
+                    size: 20,
+                    color: getColor(context, "textLight"),
+                  ),
+                  onPressed: () async {
+                    await ReviewManager.instance.deleteIgnored(item);
+                    setState(() {});
+                  },
+                ),
+                const SizedBox(width: 8),
+                Button(
+                  label: "Convert & Teach AI",
+                  icon: Icons.auto_awesome_rounded,
+                  color: theme.colorScheme.primary,
+                  textColor: theme.colorScheme.onPrimary,
+                  fontSize: 12.5,
+                  padding:
+                      const EdgeInsetsDirectional.symmetric(horizontal: 14, vertical: 8),
+                  onTap: () async {
+                    setState(() => _isLoading = true);
+                    await ReviewManager.instance
+                        .convertIgnoredToTransaction(item);
+                    setState(() {
+                      _isLoading = false;
+                      _selectedTabIndex = 0; // Move to Transactions tab
+                    });
+                    openSnackbar(
+                      SnackbarMessage(
+                        title: "Converted to Transaction",
+                        description:
+                            "Moved to Transactions inbox & AI learned this transaction format.",
+                        icon: Icons.check_circle_outline,
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildReviewCard(ReviewTransaction item) {

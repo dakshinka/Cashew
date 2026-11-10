@@ -43,7 +43,7 @@ CLASSIFICATION RULES:
 4. "information": Non-transaction banking alerts, future mandates, or scheduled notices (e.g. "E-Mandate! Rs... will be deducted on...", "will be debited on...", KYC update, daily limit notice, mandate created, cheque book dispatch). isTransaction MUST be false.
 5. "bill_reminder": Due date reminders or upcoming bill alerts ("Reminder: Bill of Rs... is due on...", "Payment due for your card"). Set isTransaction to true ONLY so the user can verify if they paid it; set isReminder to true.
 6. "debit": Money ALREADY completed, debited, spent, paid, sent, withdrawn, or transferred from user's account/card. Past-tense indicators like "spent", "sent", "debited", "paid" signify actual completed expenses. If it says "will be deducted" or "will be debited", it is an informational future mandate, NOT a debit (isTransaction MUST be false).
-7. "credit": Money actually credited, deposited, refunded, or received into user's account. isTransaction MUST be true.
+7. "credit": Money actually credited, deposited, refunded, or received into user's account. This explicitly INCLUDES messages starting with "Update!" or containing "deposited in ... A/c", "credited", "FT-", "Salary", "Salary Advance", or employer transfers. Boilerplate disclaimers like "Cheque deposits in A/C are subject to clearing" do NOT make it informational when money has been deposited/transferred. isTransaction MUST be true.
 
 ENTITY EXTRACTION:
 - merchant: The genuine shop, vendor, or recipient (e.g. "Raja Enterprises", "Swiggy", "Amazon", "Bharti Airtel"). Clean up UPI handles like @okaxis. If it is a utility or recharge (e.g. "BHARTI AIRTEL LTD"), the merchant is "Bharti Airtel", NEVER the bank!
@@ -70,13 +70,69 @@ Output ONLY valid JSON matching this schema:
 }
 ''';
 
-  /// Returns the active prompt: either custom user prompt from settings or defaultSystemPrompt
+  /// Returns the active prompt: combines user-customized prompt with learned rules & examples
   static String getSystemPrompt() {
+    final customRules = appStateSettings["customAiRules"]?.toString().trim();
+    String basePrompt = defaultSystemPrompt;
     final custom = appStateSettings["customAiPrompt"]?.toString().trim();
     if (custom != null && custom.isNotEmpty) {
-      return custom;
+      basePrompt = custom;
     }
-    return defaultSystemPrompt;
+    if (customRules != null && customRules.isNotEmpty) {
+      return "$basePrompt\n\nUSER-LEARNED CLASSIFICATION RULES & FEW-SHOT EXAMPLES:\n$customRules";
+    }
+    return basePrompt;
+  }
+
+  /// Teaches the AI about a missed transaction by analyzing it and generating a persistent rule
+  static Future<String> teachMissedTransaction(String rawMessage, {String? userFeedback}) async {
+    final provider = appStateSettings["aiProvider"]?.toString() ?? "none";
+    final key = appStateSettings["geminiApiKey"]?.toString().trim();
+
+    String learnedRule = "- Example: \"\"\"$rawMessage\"\"\" -> isTransaction: true. Even if starting with 'Update!' or containing remarks like 'subject to clearing', recognize the credit/deposit.";
+
+    if (provider == "gemini" && key != null && key.isNotEmpty) {
+      try {
+        final url = Uri.parse(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$key");
+        final prompt = '''
+You are an expert financial classification assistant.
+The user flagged this SMS as a REAL financial transaction that was previously missed or misclassified:
+"""$rawMessage"""
+${userFeedback != null && userFeedback.isNotEmpty ? "User feedback: $userFeedback" : ""}
+
+Generate a concise 1-2 sentence learning rule and few-shot example for why this is a transaction, how to extract the amount/merchant/account, and what keywords to check.
+Output ONLY the rule text to append to the system prompt.
+''';
+        final response = await http.post(
+          url,
+          headers: {"Content-Type": "application/json"},
+          body: jsonEncode({
+            "contents": [
+              {
+                "parts": [{"text": prompt}]
+              }
+            ],
+            "generationConfig": {"temperature": 0.2}
+          }),
+        );
+        if (response.statusCode == 200) {
+          final resData = jsonDecode(response.body);
+          final candidates = resData["candidates"] as List?;
+          if (candidates != null && candidates.isNotEmpty) {
+            final text = candidates[0]["content"]["parts"][0]["text"]?.toString().trim();
+            if (text != null && text.isNotEmpty) {
+              learnedRule = text;
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    final existingRules = appStateSettings["customAiRules"]?.toString().trim() ?? "";
+    final updatedRules = existingRules.isEmpty ? learnedRule : "$existingRules\n\n$learnedRule";
+    await updateSettings("customAiRules", updatedRules, updateGlobalState: true);
+    return learnedRule;
   }
 
   /// Save user-customized prompt

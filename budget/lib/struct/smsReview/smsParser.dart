@@ -246,7 +246,7 @@ class SmsParser {
     );
 
     final clauseRegex = RegExp(
-      r'\b(?:on|from|using|via|with|through)\s+([^.]+)',
+      r'\b(?:on|from|using|via|with|through|in|into|to)\s+([^.]+)',
       caseSensitive: false,
     );
     final clauseMatches = clauseRegex.allMatches(message);
@@ -563,7 +563,11 @@ class SmsParser {
         if (!lower.contains("has been debited") &&
             !lower.contains("is debited by") &&
             !lower.contains("debited for rs") &&
-            !lower.contains("debited with")) {
+            !lower.contains("debited with") &&
+            !lower.contains("deposited") &&
+            !lower.contains("depoisited") &&
+            !lower.contains("credited") &&
+            !lower.contains("salary")) {
           return true;
         }
       }
@@ -584,6 +588,15 @@ class SmsParser {
     // 2. Salary detection
     final lowerCleaned = cleaned.toLowerCase();
     if (lowerCleaned.contains("salary")) {
+      final ftPatt = RegExp(
+        r'for\s+FT\s*[-:\d\s*X]+-\s*([A-Za-z0-9&.\-_ ]+?)(?:\.\s*Avl|\s+Avl|\s*\(|\s*\.|\s*,|\s*$)',
+        caseSensitive: false,
+      );
+      final ftMatch = ftPatt.firstMatch(cleaned);
+      if (ftMatch != null && ftMatch.group(1) != null && _isValidMerchant(ftMatch.group(1)!)) {
+        return ftMatch.group(1)!.trim();
+      }
+
       final salaryPatt = RegExp(
         r'(?:by\s+salary(?:\s*[-/:]?\s*|\s+from\s+)|\bsalary\s+from\s+)([A-Za-z0-9&.\-_ ]+?)(?:\s+on\b|\s+ref\b|\s+avail\b|\s*\(|\s*\.|\s*,|\s*$)',
         caseSensitive: false,
