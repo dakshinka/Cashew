@@ -12,6 +12,7 @@ import 'package:budget/struct/smsReview/reviewManager.dart';
 import 'package:budget/struct/smsReview/reviewModels.dart';
 import 'package:budget/struct/smsReview/smsInboxScanner.dart';
 import 'package:budget/struct/smsReview/llmClassifier.dart';
+import 'package:budget/struct/smsReview/smsDiagnosticTracker.dart';
 import 'package:budget/pages/smsInspectorPage.dart';
 import 'package:budget/widgets/button.dart';
 import 'package:budget/widgets/framework/pageFramework.dart';
@@ -40,6 +41,7 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
   void initState() {
     super.initState();
     ReviewManager.instance.init().then((_) {
+      SmsDiagnosticTracker.instance.init();
       if (mounted) setState(() {});
     });
     _checkNotificationPermission();

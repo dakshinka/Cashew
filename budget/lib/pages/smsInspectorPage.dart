@@ -27,6 +27,12 @@ class _SmsInspectorPageState extends State<SmsInspectorPage> {
   bool _isScanning = false;
 
   @override
+  void initState() {
+    super.initState();
+    SmsDiagnosticTracker.instance.init();
+  }
+
+  @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
@@ -229,6 +235,22 @@ class _SmsInspectorPageState extends State<SmsInspectorPage> {
         return PageFramework(
           title: "SMS Realtime Inspector",
           actions: [
+            IconButton(
+              tooltip: "Sync from Review Inbox & Accounts",
+              icon: const Icon(Icons.sync_rounded),
+              onPressed: () async {
+                await SmsDiagnosticTracker.instance.syncHistoricalData();
+                setState(() {});
+                openSnackbar(
+                  SnackbarMessage(
+                    title: "Synced Data",
+                    description:
+                        "Loaded all previous Review Inbox & Account messages.",
+                    icon: Icons.check_circle_outline,
+                  ),
+                );
+              },
+            ),
             IconButton(
               tooltip: "Scan Device SMS Inbox",
               icon: _isScanning
