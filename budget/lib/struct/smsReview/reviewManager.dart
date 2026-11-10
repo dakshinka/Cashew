@@ -9,6 +9,7 @@ import 'package:budget/struct/smsReview/reviewModels.dart';
 import 'package:budget/struct/smsReview/smsParser.dart';
 import 'package:budget/struct/smsReview/aiCategorizer.dart';
 import 'package:budget/struct/smsReview/llmClassifier.dart';
+import 'package:budget/struct/smsReview/smsDiagnosticTracker.dart';
 import 'package:budget/struct/backupShare/backupShareManager.dart';
 
 const _uuid = Uuid();
@@ -269,7 +270,8 @@ class ReviewManager {
   }
 
   /// Process an incoming raw message string (SMS, WhatsApp, Push Notification)
-  Future<ReviewTransaction?> processRawMessage(String rawMessage, {DateTime? overrideDate}) async {
+  Future<ReviewTransaction?> processRawMessage(String rawMessage,
+      {DateTime? overrideDate, String sender = "SMS"}) async {
     final provider = appStateSettings["aiProvider"]?.toString() ?? "none";
     final hasNumbers = RegExp(r'\d{2,}').hasMatch(rawMessage);
 
@@ -278,6 +280,21 @@ class ReviewManager {
         _recordIgnoredMessage(rawMessage,
             reason: "Informational notice or future reminder",
             overrideDate: overrideDate);
+        SmsDiagnosticTracker.instance.log(
+          sender: sender,
+          rawMessage: rawMessage,
+          timestamp: overrideDate ?? DateTime.now(),
+          status: "other_sms",
+          reason: "Moved to Other SMS (Informational alert / future reminder)",
+        );
+      } else {
+        SmsDiagnosticTracker.instance.log(
+          sender: sender,
+          rawMessage: rawMessage,
+          timestamp: overrideDate ?? DateTime.now(),
+          status: "skipped",
+          reason: "Skipped: Informational alert without transacted amount",
+        );
       }
       return null;
     }
@@ -304,6 +321,22 @@ class ReviewManager {
                   reason: llmResult.reasoning ??
                       "Classified by AI as non-transaction",
                   overrideDate: overrideDate);
+              SmsDiagnosticTracker.instance.log(
+                sender: sender,
+                rawMessage: rawMessage,
+                timestamp: overrideDate ?? DateTime.now(),
+                status: "other_sms",
+                reason: llmResult.reasoning ??
+                    "Moved to Other SMS (Classified by AI as non-transaction)",
+              );
+            } else {
+              SmsDiagnosticTracker.instance.log(
+                sender: sender,
+                rawMessage: rawMessage,
+                timestamp: overrideDate ?? DateTime.now(),
+                status: "skipped",
+                reason: llmResult.reasoning ?? "Skipped by AI (No transaction)",
+              );
             }
             return null;
           }
@@ -314,6 +347,13 @@ class ReviewManager {
               _recordIgnoredMessage(rawMessage,
                   reason: "E-Mandate / Future scheduled notice",
                   overrideDate: overrideDate);
+              SmsDiagnosticTracker.instance.log(
+                sender: sender,
+                rawMessage: rawMessage,
+                timestamp: overrideDate ?? DateTime.now(),
+                status: "other_sms",
+                reason: "Moved to Other SMS (E-Mandate / Future scheduled notice)",
+              );
             }
             return null;
           }
@@ -364,6 +404,21 @@ class ReviewManager {
           _recordIgnoredMessage(rawMessage,
               reason: "No transaction keyword recognized",
               overrideDate: overrideDate);
+          SmsDiagnosticTracker.instance.log(
+            sender: sender,
+            rawMessage: rawMessage,
+            timestamp: overrideDate ?? DateTime.now(),
+            status: "other_sms",
+            reason: "Moved to Other SMS (Amount present but no debit/credit action keyword recognized)",
+          );
+        } else {
+          SmsDiagnosticTracker.instance.log(
+            sender: sender,
+            rawMessage: rawMessage,
+            timestamp: overrideDate ?? DateTime.now(),
+            status: "skipped",
+            reason: "Skipped: No financial numbers or keywords found",
+          );
         }
         return null;
       }
@@ -383,7 +438,18 @@ class ReviewManager {
                 item.cleanMerchant == reviewItem.cleanMerchant &&
                 item.date.difference(effectiveDate!).inMinutes.abs() < 5)));
 
-    if (isDuplicate) return null;
+    if (isDuplicate) {
+      SmsDiagnosticTracker.instance.log(
+        sender: sender,
+        rawMessage: rawMessage,
+        timestamp: effectiveDate ?? DateTime.now(),
+        status: "duplicate",
+        reason: "Skipped: Already pending in Review Inbox",
+        detectedAmount: reviewItem.amount,
+        detectedMerchant: reviewItem.cleanMerchant,
+      );
+      return null;
+    }
 
     // Check against existing database transactions
     try {
@@ -396,7 +462,18 @@ class ReviewManager {
           (t.amount.abs() - reviewItem!.amount.abs()).abs() < 0.01 &&
           (t.name.toLowerCase() == reviewItem.cleanMerchant.toLowerCase() ||
               t.note.contains(rawMessage.trim())));
-      if (alreadyInDb) return null;
+      if (alreadyInDb) {
+        SmsDiagnosticTracker.instance.log(
+          sender: sender,
+          rawMessage: rawMessage,
+          timestamp: effectiveDate,
+          status: "duplicate",
+          reason: "Skipped: Already recorded in Cashew database accounts",
+          detectedAmount: reviewItem.amount,
+          detectedMerchant: reviewItem.cleanMerchant,
+        );
+        return null;
+      }
     } catch (_) {}
 
     // Normalize hint to canonical form and match existing wallet
@@ -422,6 +499,20 @@ class ReviewManager {
 
     _items.insert(0, reviewItem);
     await saveToStorage();
+
+    SmsDiagnosticTracker.instance.log(
+      sender: sender,
+      rawMessage: rawMessage,
+      timestamp: effectiveDate ?? DateTime.now(),
+      status: "captured",
+      reason:
+          "Captured: ${reviewItem.cleanMerchant} (${reviewItem.displayCurrency}${reviewItem.amount.toStringAsFixed(2)}) -> ${reviewItem.accountHint ?? 'Default Wallet'}",
+      detectedAmount: reviewItem.amount,
+      detectedMerchant: reviewItem.cleanMerchant,
+      detectedAccount: reviewItem.accountHint,
+      isIncome: reviewItem.isIncome,
+    );
+
     return reviewItem;
   }
 

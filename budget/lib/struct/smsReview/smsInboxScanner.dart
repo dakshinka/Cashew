@@ -84,27 +84,29 @@ class SmsInboxScanner {
     for (int i = 0; i < messages.length; i++) {
       final msg = messages[i];
       final body = msg['body']?.toString() ?? '';
+      final address = msg['address']?.toString() ?? 'SMS';
       final dateMillis = msg['date'] as int?;
       if (body.trim().isEmpty) continue;
 
-      final parsed = SmsParser.parse(body);
-      if (!parsed.success) continue;
-
-      DateTime effectiveDate = parsed.date;
-      // If the parsed date was same as today (default), use the SMS message timestamp
+      DateTime effectiveDate = DateTime.now();
       if (dateMillis != null && dateMillis > 0) {
-        final smsDate = DateTime.fromMillisecondsSinceEpoch(dateMillis);
+        effectiveDate = DateTime.fromMillisecondsSinceEpoch(dateMillis);
+      }
+
+      final parsed = SmsParser.parse(body);
+      if (parsed.success) {
         final now = DateTime.now();
-        if (parsed.date.year == now.year &&
+        if (!(parsed.date.year == now.year &&
             parsed.date.month == now.month &&
-            parsed.date.day == now.day) {
-          effectiveDate = smsDate;
+            parsed.date.day == now.day)) {
+          effectiveDate = parsed.date;
         }
       }
 
       final item = await ReviewManager.instance.processRawMessage(
         body,
         overrideDate: effectiveDate,
+        sender: address,
       );
 
       if (item != null) {

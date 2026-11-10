@@ -107,16 +107,36 @@ class MainActivity: FlutterFragmentActivity() {
 
                 val isFinancial = lowerBody.contains("debited") ||
                                   lowerBody.contains("credited") ||
+                                  lowerBody.contains("deposited") ||
+                                  lowerBody.contains("depoisited") ||
+                                  lowerBody.contains("salary") ||
                                   lowerBody.contains("spent") ||
                                   lowerBody.contains("paid") ||
                                   lowerBody.contains("sent") ||
+                                  lowerBody.contains("withdrawn") ||
+                                  lowerBody.contains("purchase") ||
+                                  lowerBody.contains("charged") ||
                                   lowerBody.contains("inr") ||
                                   lowerBody.contains("rs.") ||
                                   lowerBody.contains("rs ") ||
+                                  lowerBody.contains("rs.") ||
                                   lowerBody.contains("₹") ||
                                   lowerBody.contains("upi") ||
                                   lowerBody.contains("transferred") ||
-                                  lowerBody.contains("refund")
+                                  lowerBody.contains("refund") ||
+                                  lowerBody.contains("cashback") ||
+                                  lowerBody.contains("a/c") ||
+                                  lowerBody.contains("acct") ||
+                                  lowerBody.contains("e-mandate") ||
+                                  lowerBody.contains("mandate") ||
+                                  lowerBody.contains("card") ||
+                                  lowerBody.contains("bank") ||
+                                  lowerBody.contains("hdfc") ||
+                                  lowerBody.contains("sbi") ||
+                                  lowerBody.contains("icici") ||
+                                  lowerBody.contains("axis") ||
+                                  lowerBody.contains("rbl") ||
+                                  lowerBody.contains("kotak")
 
                 if (isFinancial && body.isNotBlank()) {
                     val map = HashMap<String, Any>()

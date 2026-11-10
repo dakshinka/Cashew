@@ -12,6 +12,7 @@ import 'package:budget/struct/smsReview/reviewManager.dart';
 import 'package:budget/struct/smsReview/reviewModels.dart';
 import 'package:budget/struct/smsReview/smsInboxScanner.dart';
 import 'package:budget/struct/smsReview/llmClassifier.dart';
+import 'package:budget/pages/smsInspectorPage.dart';
 import 'package:budget/widgets/button.dart';
 import 'package:budget/widgets/framework/pageFramework.dart';
 import 'package:budget/widgets/framework/popupFramework.dart';
@@ -777,12 +778,20 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
           icon: const Icon(Icons.psychology_outlined),
           onPressed: _showAiModelSettingsDialog,
         ),
-        if (getPlatform(ignoreEmulation: true) == PlatformOS.isAndroid)
+        if (getPlatform(ignoreEmulation: true) == PlatformOS.isAndroid) ...[
           IconButton(
             tooltip: "Scan Previous SMSes",
             icon: const Icon(Icons.history_edu_rounded),
             onPressed: _showScanPreviousSmsDialog,
           ),
+          IconButton(
+            tooltip: "SMS Realtime Inspector & Diagnostics",
+            icon: const Icon(Icons.troubleshoot_rounded),
+            onPressed: () {
+              pushRoute(context, const SmsInspectorPage());
+            },
+          ),
+        ],
         IconButton(
           tooltip: "Paste SMS / Message",
           icon: const Icon(Icons.paste_rounded),
@@ -1201,6 +1210,12 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
                         ),
                       ],
                     ),
+                  ),
+                  IconButton(
+                    tooltip: "SMS Inspector & Diagnostics",
+                    icon: Icon(Icons.troubleshoot_rounded,
+                        color: Theme.of(context).colorScheme.secondary),
+                    onPressed: () => pushRoute(context, const SmsInspectorPage()),
                   ),
                   if (ignored.isNotEmpty)
                     Button(
