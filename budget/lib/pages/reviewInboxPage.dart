@@ -1350,7 +1350,7 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
   }
 
   void _promptAccountBindingEverywhere(
-      ReviewTransaction item, String? walletPk) {
+      ReviewTransaction item, String? walletPk, {String? walletName}) {
     final hint = item.accountHint?.trim();
     if (hint == null || hint.isEmpty) {
       ReviewManager.instance.saveToStorage();
@@ -1370,6 +1370,7 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
         await ReviewManager.instance.updateWalletForAccount(
           accountHint: hint,
           walletPk: walletPk,
+          walletName: walletName ?? hint,
           applyEverywhere: true,
         );
         setState(() {});
@@ -1388,6 +1389,7 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
         await ReviewManager.instance.updateWalletForAccount(
           accountHint: hint,
           walletPk: walletPk,
+          walletName: walletName ?? hint,
           applyEverywhere: false,
         );
         setState(() {});

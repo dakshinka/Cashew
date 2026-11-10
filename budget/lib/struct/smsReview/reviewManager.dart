@@ -61,14 +61,14 @@ class ReviewManager {
   /// Bind wallet for account across past, present, and future transactions
   Future<void> updateWalletForAccount({
     required String accountHint,
-    required String walletPk,
-    required String walletName,
+    String? walletPk,
+    String? walletName,
     bool applyEverywhere = true,
   }) async {
     final normalized = canonicalizeAccountName(accountHint);
     final digits = accountHint.replaceAll(RegExp(r'\D'), '');
 
-    if (applyEverywhere) {
+    if (applyEverywhere && walletPk != null && walletPk.isNotEmpty) {
       await saveAccountBinding(accountHint, walletPk);
       if (digits.length >= 3) {
         await saveAccountBinding(digits, walletPk);
@@ -85,14 +85,16 @@ class ReviewManager {
                 normalized.toLowerCase() ||
             (digits.isNotEmpty && itemDigits == digits)) {
           item.suggestedWalletPk = walletPk;
-          item.accountHint = walletName;
+          if (walletName != null && walletName.isNotEmpty) {
+            item.accountHint = walletName;
+          }
         }
       }
     }
     await saveToStorage();
 
     // 2. If applyEverywhere, update matching past transactions in the database!
-    if (applyEverywhere) {
+    if (applyEverywhere && walletPk != null && walletPk.isNotEmpty) {
       try {
         final allTxns = await database.allTransactions;
         for (final t in allTxns) {
