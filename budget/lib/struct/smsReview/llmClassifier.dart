@@ -889,110 +889,164 @@ Output ONLY the rule text to append to the system prompt.
     return null;
   }
 
-  /// Groq (Ultra-Fast Cloud Llama 3.3 / Llama 3.1)
+  /// Groq (Ultra-Fast Cloud Llama 3.3 / Llama 3.1 with automatic candidate failover)
   static Future<LlmClassificationResult?> _classifyWithGroq(
       String rawMessage, String apiKey, {String? model}) async {
+    final cleanApiKey = apiKey.trim();
+    final requestedModel = (model != null && model.isNotEmpty)
+        ? model.trim()
+        : (appStateSettings["groqModel"]?.toString().trim().isNotEmpty == true
+            ? appStateSettings["groqModel"]!.toString().trim()
+            : "llama-3.3-70b-versatile");
+
+    final candidates = [
+      requestedModel,
+      if (requestedModel != "llama-3.3-70b-versatile")
+        "llama-3.3-70b-versatile",
+      if (requestedModel != "llama-3.1-8b-instant") "llama-3.1-8b-instant",
+      if (requestedModel != "gemma2-9b-it") "gemma2-9b-it",
+    ];
+
     final url = Uri.parse("https://api.groq.com/openai/v1/chat/completions");
-    final activeModel = (model != null && model.isNotEmpty)
-        ? model
-        : "llama-3.3-70b-versatile";
 
-    final response = await http
-        .post(
-          url,
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": "Bearer $apiKey",
-          },
-          body: jsonEncode({
-            "model": activeModel,
-            "messages": [
-              {"role": "system", "content": getSystemPrompt()},
-              {
-                "role": "user",
-                "content": "SMS TO CLASSIFY:\n\"\"\"$rawMessage\"\"\""
-              }
-            ],
-            "response_format": {"type": "json_object"},
-            "temperature": 0.1,
-          }),
-        )
-        .timeout(const Duration(seconds: 10));
-
-    if (response.statusCode == 200) {
-      final jsonBody = jsonDecode(response.body);
-      final text = jsonBody["choices"]?[0]?["message"]?["content"];
-      if (text != null) {
-        lastAiError = null;
-        return _parseJsonResponse(text,
-            rawMessage: rawMessage, provider: "Groq ($activeModel)");
-      }
-    } else {
-      String detail = "Groq HTTP ${response.statusCode}";
+    for (final candidate in candidates) {
       try {
-        final errJson = jsonDecode(response.body);
-        final msg = errJson["error"]?["message"];
-        if (msg != null) detail = "Groq: $msg";
-      } catch (_) {
-        detail = "Groq HTTP ${response.statusCode}: ${response.body}";
+        final response = await http
+            .post(
+              url,
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer $cleanApiKey",
+              },
+              body: jsonEncode({
+                "model": candidate,
+                "messages": [
+                  {"role": "system", "content": getSystemPrompt()},
+                  {
+                    "role": "user",
+                    "content": "SMS TO CLASSIFY:\n\"\"\"$rawMessage\"\"\""
+                  }
+                ],
+                "response_format": {"type": "json_object"},
+                "temperature": 0.1,
+              }),
+            )
+            .timeout(const Duration(seconds: 10));
+
+        if (response.statusCode == 200) {
+          final jsonBody = jsonDecode(response.body);
+          final text = jsonBody["choices"]?[0]?["message"]?["content"];
+          if (text != null) {
+            lastAiError = null;
+            if (candidate != requestedModel) {
+              await updateSettings("groqModel", candidate,
+                  updateGlobalState: false);
+            }
+            return _parseJsonResponse(text,
+                rawMessage: rawMessage, provider: "Groq ($candidate)");
+          }
+        } else {
+          String detail = "Groq HTTP ${response.statusCode}";
+          try {
+            final errJson = jsonDecode(response.body);
+            final msg = errJson["error"]?["message"];
+            if (msg != null) detail = "Groq: $msg";
+          } catch (_) {
+            detail = "Groq HTTP ${response.statusCode}: ${response.body}";
+          }
+          lastAiError = detail;
+          debugPrint("Groq candidate $candidate failed: $detail");
+        }
+      } catch (e) {
+        lastAiError = e.toString();
+        debugPrint("Groq attempt exception for $candidate: $e");
       }
-      lastAiError = detail;
-      debugPrint("Groq classification failed: $detail");
     }
     return null;
   }
 
-  /// OpenRouter (Any Cloud Model - Llama 3.3, Gemini 2.0 Flash, Mistral, Claude)
+  /// OpenRouter (Any Cloud Model - Llama 3.3, Gemini 2.0 Flash, Mistral, Claude with automatic free failover)
   static Future<LlmClassificationResult?> _classifyWithOpenRouter(
       String rawMessage, String apiKey, {String? model}) async {
+    final cleanApiKey = apiKey.trim();
+    final requestedModel = (model != null && model.isNotEmpty)
+        ? model.trim()
+        : (appStateSettings["openRouterModel"]
+                    ?.toString()
+                    .trim()
+                    .isNotEmpty ==
+                true
+            ? appStateSettings["openRouterModel"]!.toString().trim()
+            : "meta-llama/llama-3.3-70b-instruct:free");
+
+    final candidates = [
+      requestedModel,
+      if (requestedModel != "meta-llama/llama-3.3-70b-instruct:free")
+        "meta-llama/llama-3.3-70b-instruct:free",
+      if (requestedModel != "google/gemini-2.0-flash-exp:free")
+        "google/gemini-2.0-flash-exp:free",
+      if (requestedModel != "deepseek/deepseek-r1:free")
+        "deepseek/deepseek-r1:free",
+    ];
+
     final url = Uri.parse("https://openrouter.ai/api/v1/chat/completions");
-    final activeModel = (model != null && model.isNotEmpty)
-        ? model
-        : "meta-llama/llama-3.3-70b-instruct:free";
 
-    final response = await http
-        .post(
-          url,
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": "Bearer $apiKey",
-            "HTTP-Referer": "https://cashewapp.web.app",
-            "X-Title": "Cashew Budget Review",
-          },
-          body: jsonEncode({
-            "model": activeModel,
-            "messages": [
-              {"role": "system", "content": getSystemPrompt()},
-              {
-                "role": "user",
-                "content": "SMS TO CLASSIFY:\n\"\"\"$rawMessage\"\"\""
-              }
-            ],
-            "response_format": {"type": "json_object"},
-            "temperature": 0.1,
-          }),
-        )
-        .timeout(const Duration(seconds: 12));
-
-    if (response.statusCode == 200) {
-      final jsonBody = jsonDecode(response.body);
-      final text = jsonBody["choices"]?[0]?["message"]?["content"];
-      if (text != null) {
-        lastAiError = null;
-        return _parseJsonResponse(text,
-            rawMessage: rawMessage, provider: "OpenRouter ($activeModel)");
-      }
-    } else {
-      String detail = "OpenRouter HTTP ${response.statusCode}";
+    for (final candidate in candidates) {
       try {
-        final errJson = jsonDecode(response.body);
-        final msg = errJson["error"]?["message"];
-        if (msg != null) detail = "OpenRouter: $msg";
-      } catch (_) {
-        detail = "OpenRouter HTTP ${response.statusCode}: ${response.body}";
+        final response = await http
+            .post(
+              url,
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer $cleanApiKey",
+                "HTTP-Referer": "https://cashewapp.web.app",
+                "X-Title": "Cashew Budget Review",
+              },
+              body: jsonEncode({
+                "model": candidate,
+                "messages": [
+                  {"role": "system", "content": getSystemPrompt()},
+                  {
+                    "role": "user",
+                    "content": "SMS TO CLASSIFY:\n\"\"\"$rawMessage\"\"\""
+                  }
+                ],
+                "response_format": {"type": "json_object"},
+                "temperature": 0.1,
+              }),
+            )
+            .timeout(const Duration(seconds: 12));
+
+        if (response.statusCode == 200) {
+          final jsonBody = jsonDecode(response.body);
+          final text = jsonBody["choices"]?[0]?["message"]?["content"];
+          if (text != null) {
+            lastAiError = null;
+            if (candidate != requestedModel) {
+              await updateSettings("openRouterModel", candidate,
+                  updateGlobalState: false);
+            }
+            return _parseJsonResponse(text,
+                rawMessage: rawMessage,
+                provider: "OpenRouter ($candidate)");
+          }
+        } else {
+          String detail = "OpenRouter HTTP ${response.statusCode}";
+          try {
+            final errJson = jsonDecode(response.body);
+            final msg = errJson["error"]?["message"];
+            if (msg != null) detail = "OpenRouter: $msg";
+          } catch (_) {
+            detail =
+                "OpenRouter HTTP ${response.statusCode}: ${response.body}";
+          }
+          lastAiError = detail;
+          debugPrint("OpenRouter candidate $candidate failed: $detail");
+        }
+      } catch (e) {
+        lastAiError = e.toString();
+        debugPrint("OpenRouter attempt exception for $candidate: $e");
       }
-      lastAiError = detail;
-      debugPrint("OpenRouter classification failed: $detail");
     }
     return null;
   }
