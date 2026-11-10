@@ -302,47 +302,47 @@ class ReviewManager {
     ReviewTransaction? reviewItem;
     DateTime? effectiveDate = overrideDate;
 
-    // 1. If Gemini, Groq, OpenRouter or Ollama AI is enabled, query LLM classifier first
-    if (provider == "gemini" ||
-        provider == "groq" ||
-        provider == "openrouter" ||
-        provider == "ollama") {
+    // 1. FIRST: Run 100% offline edge rules & persistent learned regex patterns (Zero latency, Zero AI calls)
+    final localParsed = SmsParser.parse(rawMessage);
+    if (localParsed.success && localParsed.amount > 0) {
+      effectiveDate = overrideDate ?? localParsed.date;
+      reviewItem = await SmsParser.createReviewTransaction(
+        rawMessage,
+        overrideDate: effectiveDate,
+      );
+    } else if ((provider == "gemini" ||
+            provider == "groq" ||
+            provider == "openrouter" ||
+            provider == "ollama") &&
+        hasNumbers &&
+        !SmsParser.isInformationalOrFutureNotice(rawMessage)) {
+      // 2. Only if local parsing FAILED and message contains numbers, invoke AI as fallback pattern builder
       final llmResult = await LlmClassifier.classify(rawMessage);
       if (llmResult != null) {
         if (!llmResult.isTransaction || llmResult.amount <= 0) {
-          // Double check with deterministic parser before discarding!
-          final fallback = SmsParser.parse(rawMessage);
-          if (fallback.success && fallback.amount > 0) {
-            // Overrule AI hallucination: deterministic parser found an actual deposit/withdrawal!
-            reviewItem = await SmsParser.createReviewTransaction(
-              rawMessage,
-              overrideDate: overrideDate ?? fallback.date,
+          if (hasNumbers) {
+            _recordIgnoredMessage(rawMessage,
+                reason: llmResult.reasoning ??
+                    "Classified by AI as non-transaction",
+                overrideDate: overrideDate);
+            SmsDiagnosticTracker.instance.log(
+              sender: sender,
+              rawMessage: rawMessage,
+              timestamp: overrideDate ?? DateTime.now(),
+              status: "other_sms",
+              reason: llmResult.reasoning ??
+                  "Moved to Other SMS (Classified by AI as non-transaction)",
             );
           } else {
-            if (hasNumbers) {
-              _recordIgnoredMessage(rawMessage,
-                  reason: llmResult.reasoning ??
-                      "Classified by AI as non-transaction",
-                  overrideDate: overrideDate);
-              SmsDiagnosticTracker.instance.log(
-                sender: sender,
-                rawMessage: rawMessage,
-                timestamp: overrideDate ?? DateTime.now(),
-                status: "other_sms",
-                reason: llmResult.reasoning ??
-                    "Moved to Other SMS (Classified by AI as non-transaction)",
-              );
-            } else {
-              SmsDiagnosticTracker.instance.log(
-                sender: sender,
-                rawMessage: rawMessage,
-                timestamp: overrideDate ?? DateTime.now(),
-                status: "skipped",
-                reason: llmResult.reasoning ?? "Skipped by AI (No transaction)",
-              );
-            }
-            return null;
+            SmsDiagnosticTracker.instance.log(
+              sender: sender,
+              rawMessage: rawMessage,
+              timestamp: overrideDate ?? DateTime.now(),
+              status: "skipped",
+              reason: llmResult.reasoning ?? "Skipped by AI (No transaction)",
+            );
           }
+          return null;
         } else {
           // Reject future notices / mandates hallucinated by LLM as transactions
           if (SmsParser.isInformationalOrFutureNotice(rawMessage)) {
@@ -361,21 +361,28 @@ class ReviewManager {
             return null;
           }
 
-          effectiveDate = overrideDate ?? llmResult.date ?? SmsParser.extractDate(rawMessage);
-          final cleanTitle = AiCategorizer.cleanMerchantName(llmResult.merchant);
-          final aiSuggestion = await AiCategorizer.suggestCategory(cleanTitle, isIncome: llmResult.transactionType == "credit");
+          effectiveDate = overrideDate ??
+              llmResult.date ??
+              SmsParser.extractDate(rawMessage);
+          final cleanTitle =
+              AiCategorizer.cleanMerchantName(llmResult.merchant);
+          final aiSuggestion = await AiCategorizer.suggestCategory(cleanTitle,
+              isIncome: llmResult.transactionType == "credit");
 
           // Ground accountHint with regex on the actual message text to prevent hallucinations
-          final regexHint = SmsParser.extractAccountHint(rawMessage, amount: llmResult.amount);
+          final regexHint = SmsParser.extractAccountHint(rawMessage,
+              amount: llmResult.amount);
           String? resolvedHint;
           if (regexHint != null && regexHint.isNotEmpty) {
             resolvedHint = canonicalizeAccountName(regexHint);
-          } else if (llmResult.accountHint != null && llmResult.accountHint!.isNotEmpty) {
+          } else if (llmResult.accountHint != null &&
+              llmResult.accountHint!.isNotEmpty) {
             final cand = llmResult.accountHint!;
             final amtStr = llmResult.amount.toInt().toString();
             final candDigits = cand.replaceAll(RegExp(r'\D'), '');
             final isAmountInHint = amtStr.length >= 3 && candDigits == amtStr;
-            final isMerchantInHint = cleanTitle.length >= 4 && cand.toLowerCase().contains(cleanTitle.toLowerCase());
+            final isMerchantInHint = cleanTitle.length >= 4 &&
+                cand.toLowerCase().contains(cleanTitle.toLowerCase());
             if (!isAmountInHint && !isMerchantInHint) {
               resolvedHint = canonicalizeAccountName(cand);
             }
@@ -389,48 +396,44 @@ class ReviewManager {
             currency: llmResult.currency,
             date: effectiveDate,
             isIncome: llmResult.transactionType == "credit",
-            suggestedCategoryName: llmResult.category != "Other" ? llmResult.category : aiSuggestion.categoryName,
+            suggestedCategoryName: llmResult.category != "Other"
+                ? llmResult.category
+                : aiSuggestion.categoryName,
             suggestedCategoryPk: aiSuggestion.categoryPk,
             confidence: llmResult.confidence,
             accountHint: resolvedHint,
             isReminder: llmResult.isReminder,
           );
+
+          // Asynchronously synthesize & persist an offline regex pattern so future SMS of this format require NO AI!
+          LlmClassifier.synthesizeAndStoreRegexPattern(rawMessage, llmResult);
         }
       }
     }
 
-    // 2. Fallback to enhanced deterministic edge rule parser
     if (reviewItem == null) {
-      final parsed = SmsParser.parse(rawMessage);
-      if (!parsed.success) {
-        if (hasNumbers) {
-          _recordIgnoredMessage(rawMessage,
-              reason: "No transaction keyword recognized",
-              overrideDate: overrideDate);
-          SmsDiagnosticTracker.instance.log(
-            sender: sender,
-            rawMessage: rawMessage,
-            timestamp: overrideDate ?? DateTime.now(),
-            status: "other_sms",
-            reason: "Moved to Other SMS (Amount present but no debit/credit action keyword recognized)",
-          );
-        } else {
-          SmsDiagnosticTracker.instance.log(
-            sender: sender,
-            rawMessage: rawMessage,
-            timestamp: overrideDate ?? DateTime.now(),
-            status: "skipped",
-            reason: "Skipped: No financial numbers or keywords found",
-          );
-        }
-        return null;
+      if (hasNumbers) {
+        _recordIgnoredMessage(rawMessage,
+            reason: "No transaction keyword recognized",
+            overrideDate: overrideDate);
+        SmsDiagnosticTracker.instance.log(
+          sender: sender,
+          rawMessage: rawMessage,
+          timestamp: overrideDate ?? DateTime.now(),
+          status: "other_sms",
+          reason:
+              "Moved to Other SMS (Amount present but no debit/credit action keyword recognized)",
+        );
+      } else {
+        SmsDiagnosticTracker.instance.log(
+          sender: sender,
+          rawMessage: rawMessage,
+          timestamp: overrideDate ?? DateTime.now(),
+          status: "skipped",
+          reason: "Skipped: No financial numbers or keywords found",
+        );
       }
-      effectiveDate = overrideDate ?? parsed.date;
-
-      reviewItem = await SmsParser.createReviewTransaction(
-        rawMessage,
-        overrideDate: effectiveDate,
-      );
+      return null;
     }
 
     // Check if duplicate message already pending

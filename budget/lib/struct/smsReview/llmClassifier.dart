@@ -181,6 +181,188 @@ Output ONLY the rule text to append to the system prompt.
     return learnedRule;
   }
 
+  /// Queries active LLM provider directly with a custom prompt
+  static Future<String?> queryActiveLlm(String prompt) async {
+    final provider = appStateSettings["aiProvider"]?.toString() ?? "none";
+    if (provider == "none") return null;
+
+    if (provider == "groq") {
+      final key = appStateSettings["groqApiKey"]?.toString().trim() ?? "";
+      if (key.isNotEmpty) {
+        final model = appStateSettings["groqModel"]?.toString().trim() ??
+            "llama-3.3-70b-versatile";
+        try {
+          final resp = await http
+              .post(
+                Uri.parse("https://api.groq.com/openai/v1/chat/completions"),
+                headers: {
+                  "Content-Type": "application/json",
+                  "Authorization": "Bearer $key"
+                },
+                body: jsonEncode({
+                  "model": model,
+                  "messages": [
+                    {"role": "user", "content": prompt}
+                  ],
+                  "temperature": 0.1,
+                }),
+              )
+              .timeout(const Duration(seconds: 10));
+          if (resp.statusCode == 200) {
+            final data = jsonDecode(resp.body);
+            return data["choices"]?[0]?["message"]?["content"];
+          }
+        } catch (_) {}
+      }
+    } else if (provider == "gemini") {
+      final key = appStateSettings["geminiApiKey"]?.toString().trim() ?? "";
+      if (key.isNotEmpty) {
+        final model = appStateSettings["geminiModel"]?.toString().trim() ??
+            "gemini-flash-latest";
+        try {
+          final resp = await http
+              .post(
+                Uri.parse(
+                    "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"),
+                headers: {
+                  "Content-Type": "application/json",
+                  "Authorization": "Bearer $key",
+                  "x-goog-api-key": key,
+                },
+                body: jsonEncode({
+                  "model": model,
+                  "messages": [
+                    {"role": "user", "content": prompt}
+                  ],
+                  "temperature": 0.1,
+                }),
+              )
+              .timeout(const Duration(seconds: 10));
+          if (resp.statusCode == 200) {
+            final data = jsonDecode(resp.body);
+            return data["choices"]?[0]?["message"]?["content"];
+          }
+        } catch (_) {}
+      }
+    } else if (provider == "openrouter") {
+      final key =
+          appStateSettings["openRouterApiKey"]?.toString().trim() ?? "";
+      if (key.isNotEmpty) {
+        final model = appStateSettings["openRouterModel"]?.toString().trim() ??
+            "meta-llama/llama-3.3-70b-instruct:free";
+        try {
+          final resp = await http
+              .post(
+                Uri.parse("https://openrouter.ai/api/v1/chat/completions"),
+                headers: {
+                  "Content-Type": "application/json",
+                  "Authorization": "Bearer $key"
+                },
+                body: jsonEncode({
+                  "model": model,
+                  "messages": [
+                    {"role": "user", "content": prompt}
+                  ],
+                  "temperature": 0.1,
+                }),
+              )
+              .timeout(const Duration(seconds: 10));
+          if (resp.statusCode == 200) {
+            final data = jsonDecode(resp.body);
+            return data["choices"]?[0]?["message"]?["content"];
+          }
+        } catch (_) {}
+      }
+    } else if (provider == "ollama") {
+      final ep = appStateSettings["ollamaEndpoint"]?.toString().trim() ??
+          "http://192.168.1.100:11434";
+      final model =
+          appStateSettings["ollamaModel"]?.toString().trim() ?? "llama3.2";
+      if (!ep.contains("localhost")) {
+        try {
+          final base = ep.endsWith("/") ? ep.substring(0, ep.length - 1) : ep;
+          final resp = await http
+              .post(
+                Uri.parse("$base/api/generate"),
+                headers: {"Content-Type": "application/json"},
+                body: jsonEncode({
+                  "model": model,
+                  "prompt": prompt,
+                  "stream": false
+                }),
+              )
+              .timeout(const Duration(seconds: 15));
+          if (resp.statusCode == 200) {
+            final data = jsonDecode(resp.body);
+            return data["response"];
+          }
+        } catch (_) {}
+      }
+    }
+    return null;
+  }
+
+  /// Synthesizes an offline regex pattern from an SMS that required AI classification,
+  /// storing it locally so all future messages of this bank format run 100% offline at 0 AI cost.
+  static Future<bool> synthesizeAndStoreRegexPattern(
+      String rawMessage, LlmClassificationResult result) async {
+    if (!result.isTransaction || result.amount <= 0) return false;
+
+    try {
+      final prompt = '''
+You are a regex synthesis assistant.
+A banking SMS was not matched by default edge rules:
+"""$rawMessage"""
+
+Extracted values:
+- Amount: ${result.amount}
+- Merchant: ${result.merchant}
+- Is Income: ${result.transactionType == 'credit'}
+
+Create a generalized Dart RegExp pattern (case-insensitive) to extract the amount and merchant from similar future messages.
+Output strictly JSON:
+{
+  "pattern": "regex_pattern_string_here",
+  "amountGroup": 1,
+  "merchantGroup": 2,
+  "isIncome": ${result.transactionType == 'credit'}
+}
+''';
+
+      final responseText = await queryActiveLlm(prompt);
+      if (responseText != null && responseText.isNotEmpty) {
+        final cleanJson =
+            responseText.replaceAll(RegExp(r'```json|```'), '').trim();
+        final Map<String, dynamic> data = jsonDecode(cleanJson);
+        final pattern = data["pattern"]?.toString();
+        final amountGroup =
+            data["amountGroup"] is int ? data["amountGroup"] as int : 1;
+        final merchantGroup =
+            data["merchantGroup"] is int ? data["merchantGroup"] as int : null;
+        final isIncome = data["isIncome"] == true;
+
+        if (pattern != null && pattern.isNotEmpty) {
+          final reg = RegExp(pattern, caseSensitive: false);
+          final match = reg.firstMatch(rawMessage);
+          if (match != null) {
+            await SmsParser.addLearnedPattern(
+              pattern: pattern,
+              amountGroup: amountGroup,
+              merchantGroup: merchantGroup,
+              isIncome: isIncome,
+              exampleSms: rawMessage,
+            );
+            debugPrint("Synthesized & stored offline regex: $pattern");
+            return true;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint("Regex synthesis error: $e");
+    }
+    return false;
+  }
+
   /// Save user-customized prompt
   static Future<void> saveSystemPrompt(String prompt) async {
     await updateSettings("customAiPrompt", prompt.trim(), updateGlobalState: true);

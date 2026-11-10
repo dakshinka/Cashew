@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:budget/struct/smsReview/reviewModels.dart';
 import 'package:budget/struct/smsReview/aiCategorizer.dart';
 import 'package:budget/struct/settings.dart';
@@ -692,10 +694,114 @@ class SmsParser {
     return null;
   }
 
+  /// Checks user-learned / AI-synthesized regex patterns stored in local persistent settings
+  static ParsedSmsResult? _checkCustomLearnedPatterns(String message) {
+    try {
+      final raw = appStateSettings["customSmsPatterns"];
+      if (raw == null) return null;
+      List patternsList = [];
+      if (raw is List) {
+        patternsList = raw;
+      } else if (raw is String && raw.trim().isNotEmpty) {
+        patternsList = jsonDecode(raw);
+      }
+      for (final p in patternsList) {
+        if (p is! Map) continue;
+        final patternStr = p["pattern"]?.toString();
+        if (patternStr == null || patternStr.isEmpty) continue;
+        final reg = RegExp(patternStr, caseSensitive: false);
+        final match = reg.firstMatch(message);
+        if (match != null) {
+          final amtGroup =
+              p["amountGroup"] is int ? p["amountGroup"] as int : 1;
+          final merGroup =
+              p["merchantGroup"] is int ? p["merchantGroup"] as int : 2;
+          final isIncome = p["isIncome"] == true;
+
+          double? amt;
+          if (match.groupCount >= amtGroup && match.group(amtGroup) != null) {
+            final clean =
+                match.group(amtGroup)!.replaceAll(RegExp(r'[, ]'), '').trim();
+            amt = double.tryParse(clean);
+          }
+          amt ??= extractAmountFromText(message);
+          if (amt != null && amt > 0) {
+            String merchant = "";
+            if (match.groupCount >= merGroup &&
+                match.group(merGroup) != null) {
+              merchant = match.group(merGroup)!.trim();
+            }
+            if (merchant.isEmpty || !_isValidMerchant(merchant)) {
+              merchant = extractMerchant(message, isCredit: isIncome);
+            }
+            return ParsedSmsResult(
+              success: true,
+              amount: amt,
+              currency: extractCurrency(message),
+              isIncome: isIncome,
+              rawMerchant: merchant,
+              accountHint: extractAccountHint(message, amount: amt),
+              date: extractDate(message),
+            );
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint("Custom regex check error: $e");
+    }
+    return null;
+  }
+
+  /// Adds a verified regex pattern to local storage so future SMS of this format are parsed 100% offline
+  static Future<bool> addLearnedPattern({
+    required String pattern,
+    required int amountGroup,
+    int? merchantGroup,
+    required bool isIncome,
+    String? exampleSms,
+  }) async {
+    try {
+      final raw = appStateSettings["customSmsPatterns"];
+      List patternsList = [];
+      if (raw is List) {
+        patternsList = List.from(raw);
+      } else if (raw is String && raw.trim().isNotEmpty) {
+        patternsList = List.from(jsonDecode(raw));
+      }
+
+      final exists =
+          patternsList.any((p) => p is Map && p["pattern"] == pattern);
+      if (!exists) {
+        patternsList.add({
+          "pattern": pattern,
+          "amountGroup": amountGroup,
+          "merchantGroup": merchantGroup,
+          "isIncome": isIncome,
+          "example": exampleSms ?? "",
+          "createdAt": DateTime.now().toIso8601String(),
+        });
+        await updateSettings(
+            "customSmsPatterns", jsonEncode(patternsList),
+            updateGlobalState: true);
+        debugPrint("Saved new offline regex pattern: $pattern");
+        return true;
+      }
+    } catch (e) {
+      debugPrint("Failed to save learned pattern: $e");
+    }
+    return false;
+  }
+
   /// Parse an incoming SMS or notification message
   static ParsedSmsResult parse(String message) {
     if (message.trim().isEmpty) {
       return ParsedSmsResult(success: false);
+    }
+
+    // 0. Check AI-synthesized / user-learned persistent offline regex patterns first
+    final customMatch = _checkCustomLearnedPatterns(message);
+    if (customMatch != null) {
+      return customMatch;
     }
 
     final lower = message.toLowerCase();
