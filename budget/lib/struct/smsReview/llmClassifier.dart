@@ -426,26 +426,44 @@ Output ONLY the rule text to append to the system prompt.
     return _classifyWithEdgeRules(rawMessage);
   }
 
-  /// Lists available models for this Gemini API key that support generateContent
-  static Future<List<String>> _listGeminiModels(String apiKey) async {
-    final candList = <String>[];
-    for (final apiVersion in ["v1beta", "v1"]) {
+  /// Lists available models for this Gemini API key that support generateContent, categorizing free vs paid
+  static Future<List<Map<String, dynamic>>> listGeminiModels(
+      String apiKey) async {
+    final cleanKey = apiKey.trim();
+    if (cleanKey.isEmpty) return [];
+
+    final candList = <Map<String, dynamic>>[];
+    for (final apiVersion in ["v1beta", "v1", "v1alpha"]) {
       try {
         final url = Uri.parse(
-            "https://generativelanguage.googleapis.com/$apiVersion/models?key=$apiKey");
-        final resp = await http.get(url).timeout(const Duration(seconds: 8));
+            "https://generativelanguage.googleapis.com/$apiVersion/models?key=${Uri.encodeQueryComponent(cleanKey)}");
+        final resp = await http.get(url, headers: {
+          "x-goog-api-key": cleanKey,
+        }).timeout(const Duration(seconds: 8));
         if (resp.statusCode == 200) {
           final data = jsonDecode(resp.body);
           final models = data["models"] as List?;
           if (models != null) {
             for (final m in models) {
-              final name = m["name"]?.toString() ?? "";
+              final rawName = m["name"]?.toString() ?? "";
+              final cleanName = rawName.replaceFirst("models/", "").trim();
               final methods = (m["supportedGenerationMethods"] as List?)
                       ?.map((e) => e.toString())
                       .toList() ??
                   [];
               if (methods.contains("generateContent")) {
-                candList.add(name.replaceFirst("models/", ""));
+                final lower = cleanName.toLowerCase();
+                final isFlash = lower.contains("flash");
+                final isExp = lower.contains("-exp") || lower.contains("preview");
+                final isFree = isFlash || isExp;
+                candList.add({
+                  "model": cleanName,
+                  "label": isFree
+                      ? "$cleanName (Free)"
+                      : "$cleanName (Paid / Billing Required)",
+                  "isFree": isFree,
+                  "apiVersion": apiVersion,
+                });
               }
             }
           }
@@ -459,25 +477,32 @@ Output ONLY the rule text to append to the system prompt.
   /// Google Gemini (Customizable model with automatic v1/v1beta fallback & model discovery)
   static Future<LlmClassificationResult?> _classifyWithGemini(
       String rawMessage, String apiKey, {String? model}) async {
+    final cleanApiKey = apiKey.trim();
     final requestedModel = (model != null && model.isNotEmpty)
-        ? model
+        ? model.replaceFirst(RegExp(r'^models/'), '').trim()
         : (appStateSettings["geminiModel"]?.toString().trim().isNotEmpty == true
-            ? appStateSettings["geminiModel"]!.toString().trim()
-            : "gemini-1.5-flash");
+            ? appStateSettings["geminiModel"]!
+                .toString()
+                .trim()
+                .replaceFirst(RegExp(r'^models/'), '')
+            : "gemini-2.5-flash");
 
-    // Try candidate models: requested model first, then common aliases
+    // Try candidate models: requested model first, then common Flash and Pro models
     final candidateModels = [
       requestedModel,
+      if (requestedModel != "gemini-2.5-flash") "gemini-2.5-flash",
       if (requestedModel != "gemini-1.5-flash-latest") "gemini-1.5-flash-latest",
-      if (requestedModel != "gemini-2.0-flash-exp") "gemini-2.0-flash-exp",
       if (requestedModel != "gemini-1.5-flash") "gemini-1.5-flash",
-      if (requestedModel != "gemini-1.5-pro") "gemini-1.5-pro",
+      if (requestedModel != "gemini-2.0-flash-exp") "gemini-2.0-flash-exp",
     ];
 
+    String lastDetail = "";
+
     for (final candidate in candidateModels) {
-      for (final apiVersion in ["v1beta", "v1"]) {
+      final cleanCand = candidate.replaceFirst(RegExp(r'^models/'), '').trim();
+      for (final apiVersion in ["v1beta", "v1", "v1alpha"]) {
         final url = Uri.parse(
-            "https://generativelanguage.googleapis.com/$apiVersion/models/$candidate:generateContent?key=$apiKey");
+            "https://generativelanguage.googleapis.com/$apiVersion/models/$cleanCand:generateContent?key=${Uri.encodeQueryComponent(cleanApiKey)}");
 
         final bodyMap = <String, dynamic>{
           "contents": [
@@ -500,7 +525,10 @@ Output ONLY the rule text to append to the system prompt.
           final response = await http
               .post(
                 url,
-                headers: {"Content-Type": "application/json"},
+                headers: {
+                  "Content-Type": "application/json",
+                  "x-goog-api-key": cleanApiKey,
+                },
                 body: jsonEncode(bodyMap),
               )
               .timeout(const Duration(seconds: 12));
@@ -510,48 +538,61 @@ Output ONLY the rule text to append to the system prompt.
             final text = jsonBody["candidates"]?[0]?["content"]?["parts"]?[0]?["text"];
             if (text != null) {
               lastAiError = null;
-              if (candidate != requestedModel) {
-                await updateSettings("geminiModel", candidate,
+              if (cleanCand != requestedModel) {
+                await updateSettings("geminiModel", cleanCand,
                     updateGlobalState: false);
               }
               return _parseJsonResponse(text,
-                  rawMessage: rawMessage, provider: "Gemini ($candidate)");
+                  rawMessage: rawMessage, provider: "Gemini ($cleanCand)");
             }
-          } else if (response.statusCode == 404) {
-            // Model not supported on this version, try next version or candidate
-            continue;
           } else {
-            String detail = "Gemini HTTP ${response.statusCode}";
             try {
               final errJson = jsonDecode(response.body);
-              final msg = errJson["error"]?["message"];
-              if (msg != null) detail = "Gemini: $msg";
+              lastDetail = errJson["error"]?["message"] ?? response.body;
             } catch (_) {
-              detail = "Gemini HTTP ${response.statusCode}: ${response.body}";
+              lastDetail = "HTTP ${response.statusCode}: ${response.body}";
             }
-            lastAiError = detail;
-            debugPrint("Gemini classification failed: $detail");
-            return null;
+            if (response.statusCode != 404) {
+              lastAiError = "Gemini ($cleanCand): $lastDetail";
+              debugPrint("Gemini classification failed: $lastAiError");
+              return null;
+            }
           }
         } catch (e) {
-          debugPrint("Gemini attempt error for $candidate ($apiVersion): $e");
+          debugPrint("Gemini attempt error for $cleanCand ($apiVersion): $e");
+          lastDetail = e.toString();
         }
       }
     }
 
     // If all candidate attempts failed, query the user's available model list
     try {
-      final available = await _listGeminiModels(apiKey);
+      final available = await listGeminiModels(cleanApiKey);
       if (available.isNotEmpty) {
+        final freeList = available
+            .where((m) => m["isFree"] == true)
+            .map((m) => m["model"] as String)
+            .toList();
+        final paidList = available
+            .where((m) => m["isFree"] != true)
+            .map((m) => m["model"] as String)
+            .toList();
+
         lastAiError =
-            "Model '$requestedModel' not found. Available models for your API key: ${available.take(4).join(', ')}. Please select one in AI Settings.";
+            "Model '$requestedModel' not found or requires billing.\n" +
+            (freeList.isNotEmpty
+                ? "🟢 Free models available for your key: ${freeList.join(', ')}\n"
+                : "") +
+            (paidList.isNotEmpty
+                ? "🟡 Paid / billing required: ${paidList.join(', ')}"
+                : "");
       } else {
         lastAiError =
-            "Gemini API key is invalid or Generative Language API is not enabled in your Google Cloud / AI Studio project.";
+            "Gemini API key is invalid or Generative Language API is not enabled in your Google Cloud / AI Studio project.\nDetail: $lastDetail";
       }
     } catch (_) {
       lastAiError =
-          "Gemini: models/$requestedModel not found or not supported for generateContent.";
+          "Gemini: models/$requestedModel not found or not supported for generateContent. Detail: $lastDetail";
     }
     return null;
   }

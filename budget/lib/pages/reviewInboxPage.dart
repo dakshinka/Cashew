@@ -82,7 +82,7 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
       text: appStateSettings["geminiApiKey"]?.toString() ?? "",
     );
     final geminiModelController = TextEditingController(
-      text: appStateSettings["geminiModel"]?.toString() ?? "gemini-1.5-flash",
+      text: appStateSettings["geminiModel"]?.toString() ?? "gemini-2.5-flash",
     );
     final groqApiKeyController = TextEditingController(
       text: appStateSettings["groqApiKey"]?.toString() ?? "",
@@ -99,13 +99,101 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
     );
     final endpointController = TextEditingController(
       text: appStateSettings["ollamaEndpoint"]?.toString() ??
-          "http://localhost:11434",
+          "http://192.168.1.100:11434",
     );
     final modelController = TextEditingController(
       text: appStateSettings["ollamaModel"]?.toString() ?? "llama3.2",
     );
 
+    List<Map<String, dynamic>> geminiModels = [
+      {
+        "model": "gemini-2.5-flash",
+        "label": "🟢 gemini-2.5-flash (Free Tier - Recommended)",
+        "isFree": true
+      },
+      {
+        "model": "gemini-1.5-flash",
+        "label": "🟢 gemini-1.5-flash (Free Tier)",
+        "isFree": true
+      },
+      {
+        "model": "gemini-2.0-flash-exp",
+        "label": "🟢 gemini-2.0-flash-exp (Experimental Free)",
+        "isFree": true
+      },
+      {
+        "model": "gemini-2.5-pro",
+        "label": "🟡 gemini-2.5-pro (Paid / Billing Required)",
+        "isFree": false
+      },
+      {
+        "model": "gemini-1.5-pro",
+        "label": "🟡 gemini-1.5-pro (Paid / Billing Required)",
+        "isFree": false
+      },
+      {"model": "custom", "label": "✏️ Custom Model Slug...", "isFree": true},
+    ];
+
+    List<Map<String, dynamic>> groqModels = [
+      {
+        "model": "llama-3.3-70b-versatile",
+        "label": "🟢 llama-3.3-70b-versatile (Free - Recommended)",
+        "isFree": true
+      },
+      {
+        "model": "llama-3.1-8b-instant",
+        "label": "🟢 llama-3.1-8b-instant (Free - Fastest)",
+        "isFree": true
+      },
+      {
+        "model": "mixtral-8x7b-32768",
+        "label": "🟢 mixtral-8x7b-32768 (Free)",
+        "isFree": true
+      },
+      {
+        "model": "gemma2-9b-it",
+        "label": "🟢 gemma2-9b-it (Free)",
+        "isFree": true
+      },
+      {"model": "custom", "label": "✏️ Custom Model Slug...", "isFree": true},
+    ];
+
+    List<Map<String, dynamic>> openRouterModels = [
+      {
+        "model": "meta-llama/llama-3.3-70b-instruct:free",
+        "label": "🟢 Llama 3.3 70B (Free)",
+        "isFree": true
+      },
+      {
+        "model": "google/gemini-2.0-flash-exp:free",
+        "label": "🟢 Gemini 2.0 Flash Exp (Free)",
+        "isFree": true
+      },
+      {
+        "model": "deepseek/deepseek-r1:free",
+        "label": "🟢 DeepSeek R1 (Free)",
+        "isFree": true
+      },
+      {
+        "model": "qwen/qwen-2.5-72b-instruct:free",
+        "label": "🟢 Qwen 2.5 72B (Free)",
+        "isFree": true
+      },
+      {
+        "model": "anthropic/claude-3.5-sonnet",
+        "label": "🟡 Claude 3.5 Sonnet (Paid)",
+        "isFree": false
+      },
+      {
+        "model": "openai/gpt-4o-mini",
+        "label": "🟡 GPT-4o Mini (Paid)",
+        "isFree": false
+      },
+      {"model": "custom", "label": "✏️ Custom Model Slug...", "isFree": true},
+    ];
+
     bool isTestingConnection = false;
+    bool isDetectingGeminiModels = false;
     Map<String, dynamic>? testConnectionResult;
 
     openBottomSheet(
@@ -189,17 +277,164 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
                             bubbly: false,
                           ),
                           const SizedBox(height: 8),
-                          TextInput(
-                            controller: geminiModelController,
-                            labelText: "Model Name (default: gemini-1.5-flash)",
-                            bubbly: false,
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const TextFont(
+                                text: "Select Gemini Model:",
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              InkWell(
+                                onTap: isDetectingGeminiModels
+                                    ? null
+                                    : () async {
+                                        final key =
+                                            apiKeyController.text.trim();
+                                        if (key.isEmpty) {
+                                          openSnackbar(
+                                            SnackbarMessage(
+                                              title: "Enter API Key",
+                                              description:
+                                                  "Please enter your Gemini API key first.",
+                                              icon: Icons.vpn_key_rounded,
+                                            ),
+                                          );
+                                          return;
+                                        }
+                                        setSheetState(() =>
+                                            isDetectingGeminiModels = true);
+                                        final fetched =
+                                            await LlmClassifier.listGeminiModels(
+                                                key);
+                                        setSheetState(() {
+                                          isDetectingGeminiModels = false;
+                                          if (fetched.isNotEmpty) {
+                                            geminiModels = [
+                                              ...fetched,
+                                              {
+                                                "model": "custom",
+                                                "label":
+                                                    "✏️ Custom Model Slug...",
+                                                "isFree": true,
+                                              },
+                                            ];
+                                            final firstFree =
+                                                fetched.firstWhere(
+                                                    (m) => m["isFree"] == true,
+                                                    orElse: () =>
+                                                        fetched.first);
+                                            geminiModelController.text =
+                                                firstFree["model"];
+                                          }
+                                        });
+                                      },
+                                borderRadius: BorderRadius.circular(6),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 6, vertical: 2),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      if (isDetectingGeminiModels)
+                                        const SizedBox(
+                                          width: 12,
+                                          height: 12,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2),
+                                        )
+                                      else
+                                        Icon(Icons.sync_rounded,
+                                            size: 14,
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .primary),
+                                      const SizedBox(width: 4),
+                                      TextFont(
+                                        text: isDetectingGeminiModels
+                                            ? "Detecting..."
+                                            : "Detect Models",
+                                        fontSize: 11,
+                                        textColor: Theme.of(context)
+                                            .colorScheme
+                                            .primary,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
+                          const SizedBox(height: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: getColor(context, "canvasContainer"),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: getColor(context, "dividerColor")
+                                    .withOpacity(0.3),
+                              ),
+                            ),
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<String>(
+                                isExpanded: true,
+                                value: geminiModels.any((m) =>
+                                        m["model"] ==
+                                        geminiModelController.text.trim())
+                                    ? geminiModelController.text.trim()
+                                    : "gemini-2.5-flash",
+                                borderRadius: BorderRadius.circular(12),
+                                dropdownColor:
+                                    getColor(context, "canvasContainer"),
+                                icon: const Icon(
+                                    Icons.keyboard_arrow_down_rounded),
+                                items: geminiModels.map((item) {
+                                  return DropdownMenuItem<String>(
+                                    value: item["model"],
+                                    child: TextFont(
+                                      text: item["label"],
+                                      fontSize: 12,
+                                      fontWeight: item["isFree"] == true
+                                          ? FontWeight.w600
+                                          : FontWeight.normal,
+                                      textColor: item["isFree"] == true
+                                          ? getColor(context, "black")
+                                          : Colors.orange.shade800,
+                                    ),
+                                  );
+                                }).toList(),
+                                onChanged: (newVal) {
+                                  if (newVal != null) {
+                                    setSheetState(() {
+                                      geminiModelController.text = newVal;
+                                    });
+                                  }
+                                },
+                              ),
+                            ),
+                          ),
+                          if (geminiModelController.text == "custom") ...[
+                            const SizedBox(height: 8),
+                            TextInput(
+                              controller: geminiModelController,
+                              labelText:
+                                  "Custom Model Slug (e.g. gemini-2.5-flash)",
+                              bubbly: false,
+                            ),
+                          ],
                           const SizedBox(height: 4),
                           TextFont(
-                            text:
-                                "Free usage: 15 req/min, 1,500 req/day (gemini-1.5-flash, gemini-2.0-flash).\nGet free key: https://aistudio.google.com/ (no card needed)",
+                            text: geminiModelController.text.contains("pro")
+                                ? "⚠️ Pro models require Google Cloud billing. For free usage, select gemini-2.5-flash or gemini-1.5-flash."
+                                : "✅ Free usage: 15 req/min, 1,500 req/day without billing.\nGet key: https://aistudio.google.com/",
                             fontSize: 11,
-                            textColor: getColor(context, "textLight"),
+                            textColor:
+                                geminiModelController.text.contains("pro")
+                                    ? Colors.orange.shade800
+                                    : getColor(context, "textLight"),
                           ),
                         ],
                       ),
@@ -235,14 +470,69 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
                             bubbly: false,
                           ),
                           const SizedBox(height: 8),
-                          TextInput(
-                            controller: groqModelController,
-                            labelText: "Model Name (default: llama-3.3-70b-versatile)",
-                            bubbly: false,
+                          const TextFont(
+                            text: "Select Groq Model:",
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
                           ),
+                          const SizedBox(height: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: getColor(context, "canvasContainer"),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: getColor(context, "dividerColor")
+                                    .withOpacity(0.3),
+                              ),
+                            ),
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<String>(
+                                isExpanded: true,
+                                value: groqModels.any((m) =>
+                                        m["model"] ==
+                                        groqModelController.text.trim())
+                                    ? groqModelController.text.trim()
+                                    : "llama-3.3-70b-versatile",
+                                borderRadius: BorderRadius.circular(12),
+                                dropdownColor:
+                                    getColor(context, "canvasContainer"),
+                                icon: const Icon(
+                                    Icons.keyboard_arrow_down_rounded),
+                                items: groqModels.map((item) {
+                                  return DropdownMenuItem<String>(
+                                    value: item["model"],
+                                    child: TextFont(
+                                      text: item["label"],
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      textColor: getColor(context, "black"),
+                                    ),
+                                  );
+                                }).toList(),
+                                onChanged: (newVal) {
+                                  if (newVal != null) {
+                                    setSheetState(() {
+                                      groqModelController.text = newVal;
+                                    });
+                                  }
+                                },
+                              ),
+                            ),
+                          ),
+                          if (groqModelController.text == "custom") ...[
+                            const SizedBox(height: 8),
+                            TextInput(
+                              controller: groqModelController,
+                              labelText: "Custom Groq Model Slug",
+                              bubbly: false,
+                            ),
+                          ],
                           const SizedBox(height: 4),
                           TextFont(
-                            text: "Free usage: 30 req/min, 14,400 req/day, ~300 tok/s.\nGet free key: https://console.groq.com/keys",
+                            text:
+                                "Free usage: 30 req/min, 14,400 req/day, ~300 tok/s.\nGet free key: https://console.groq.com/keys",
                             fontSize: 11,
                             textColor: getColor(context, "textLight"),
                           ),
@@ -280,14 +570,74 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
                             bubbly: false,
                           ),
                           const SizedBox(height: 8),
-                          TextInput(
-                            controller: openRouterModelController,
-                            labelText: "Model Name (e.g. meta-llama/llama-3.3-70b-instruct:free)",
-                            bubbly: false,
+                          const TextFont(
+                            text: "Select OpenRouter Model:",
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
                           ),
+                          const SizedBox(height: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: getColor(context, "canvasContainer"),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: getColor(context, "dividerColor")
+                                    .withOpacity(0.3),
+                              ),
+                            ),
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<String>(
+                                isExpanded: true,
+                                value: openRouterModels.any((m) =>
+                                        m["model"] ==
+                                        openRouterModelController.text.trim())
+                                    ? openRouterModelController.text.trim()
+                                    : "meta-llama/llama-3.3-70b-instruct:free",
+                                borderRadius: BorderRadius.circular(12),
+                                dropdownColor:
+                                    getColor(context, "canvasContainer"),
+                                icon: const Icon(
+                                    Icons.keyboard_arrow_down_rounded),
+                                items: openRouterModels.map((item) {
+                                  return DropdownMenuItem<String>(
+                                    value: item["model"],
+                                    child: TextFont(
+                                      text: item["label"],
+                                      fontSize: 12,
+                                      fontWeight: item["isFree"] == true
+                                          ? FontWeight.w600
+                                          : FontWeight.normal,
+                                      textColor: item["isFree"] == true
+                                          ? getColor(context, "black")
+                                          : Colors.orange.shade800,
+                                    ),
+                                  );
+                                }).toList(),
+                                onChanged: (newVal) {
+                                  if (newVal != null) {
+                                    setSheetState(() {
+                                      openRouterModelController.text = newVal;
+                                    });
+                                  }
+                                },
+                              ),
+                            ),
+                          ),
+                          if (openRouterModelController.text == "custom") ...[
+                            const SizedBox(height: 8),
+                            TextInput(
+                              controller: openRouterModelController,
+                              labelText:
+                                  "Custom OpenRouter Model (e.g. deepseek/deepseek-r1:free)",
+                              bubbly: false,
+                            ),
+                          ],
                           const SizedBox(height: 4),
                           TextFont(
-                            text: "Free models: Append ':free' (e.g. meta-llama/llama-3.3-70b-instruct:free or google/gemini-2.0-flash-exp:free).\nGet key: https://openrouter.ai/keys",
+                            text:
+                                "Free models end with ':free' (zero cost).\nGet key: https://openrouter.ai/keys",
                             fontSize: 11,
                             textColor: getColor(context, "textLight"),
                           ),
