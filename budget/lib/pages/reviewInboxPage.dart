@@ -107,8 +107,18 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
 
     List<Map<String, dynamic>> geminiModels = [
       {
+        "model": "gemini-flash-latest",
+        "label": "🟢 gemini-flash-latest (Auto Latest Free - Recommended)",
+        "isFree": true
+      },
+      {
         "model": "gemini-2.5-flash",
-        "label": "🟢 gemini-2.5-flash (Free Tier - Recommended)",
+        "label": "🟢 gemini-2.5-flash (Free Tier)",
+        "isFree": true
+      },
+      {
+        "model": "gemini-flash-lite-latest",
+        "label": "🟢 gemini-flash-lite-latest (Fast Free)",
         "isFree": true
       },
       {
@@ -192,8 +202,19 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
       {"model": "custom", "label": "✏️ Custom Model Slug...", "isFree": true},
     ];
 
+    List<Map<String, dynamic>> ollamaModels = [
+      {"model": "llama3.2", "label": "🟢 llama3.2 (Local 3B)", "isFree": true},
+      {"model": "llama3.1", "label": "🟢 llama3.1 (Local 8B)", "isFree": true},
+      {"model": "gemma2:2b", "label": "🟢 gemma2:2b (Local Light)", "isFree": true},
+      {"model": "qwen2.5:3b", "label": "🟢 qwen2.5:3b (Local)", "isFree": true},
+      {"model": "custom", "label": "✏️ Custom Model Slug...", "isFree": true},
+    ];
+
     bool isTestingConnection = false;
     bool isDetectingGeminiModels = false;
+    bool isDetectingGroqModels = false;
+    bool isDetectingOpenRouterModels = false;
+    bool isDetectingOllamaModels = false;
     Map<String, dynamic>? testConnectionResult;
 
     openBottomSheet(
@@ -470,10 +491,99 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
                             bubbly: false,
                           ),
                           const SizedBox(height: 8),
-                          const TextFont(
-                            text: "Select Groq Model:",
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const TextFont(
+                                text: "Select Groq Model:",
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              InkWell(
+                                onTap: isDetectingGroqModels
+                                    ? null
+                                    : () async {
+                                        final key =
+                                            groqApiKeyController.text.trim();
+                                        if (key.isEmpty) {
+                                          openSnackbar(
+                                            SnackbarMessage(
+                                              title: "Enter API Key",
+                                              description:
+                                                  "Please enter your Groq API key first.",
+                                              icon: Icons.vpn_key_rounded,
+                                            ),
+                                          );
+                                          return;
+                                        }
+                                        setSheetState(() =>
+                                            isDetectingGroqModels = true);
+                                        final fetched =
+                                            await LlmClassifier.listProviderModels(
+                                                provider: "groq",
+                                                apiKey: key);
+                                        setSheetState(() {
+                                          isDetectingGroqModels = false;
+                                          if (fetched.isNotEmpty) {
+                                            groqModels = [
+                                              ...fetched,
+                                              {
+                                                "model": "custom",
+                                                "label":
+                                                    "✏️ Custom Model Slug...",
+                                                "isFree": true,
+                                              },
+                                            ];
+                                            groqModelController.text =
+                                                fetched.first["model"];
+                                          } else {
+                                            openSnackbar(
+                                              SnackbarMessage(
+                                                title: "No models returned",
+                                                description:
+                                                    "Check your Groq API key.",
+                                                icon: Icons.error_outline_rounded,
+                                              ),
+                                            );
+                                          }
+                                        });
+                                      },
+                                borderRadius: BorderRadius.circular(6),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 6, vertical: 2),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      if (isDetectingGroqModels)
+                                        const SizedBox(
+                                          width: 12,
+                                          height: 12,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2),
+                                        )
+                                      else
+                                        Icon(Icons.sync_rounded,
+                                            size: 14,
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .primary),
+                                      const SizedBox(width: 4),
+                                      TextFont(
+                                        text: isDetectingGroqModels
+                                            ? "Detecting..."
+                                            : "Detect Models",
+                                        fontSize: 11,
+                                        textColor: Theme.of(context)
+                                            .colorScheme
+                                            .primary,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                           const SizedBox(height: 6),
                           Container(
@@ -570,10 +680,84 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
                             bubbly: false,
                           ),
                           const SizedBox(height: 8),
-                          const TextFont(
-                            text: "Select OpenRouter Model:",
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const TextFont(
+                                text: "Select OpenRouter Model:",
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              InkWell(
+                                onTap: isDetectingOpenRouterModels
+                                    ? null
+                                    : () async {
+                                        final key =
+                                            openRouterApiKeyController.text.trim();
+                                        setSheetState(() =>
+                                            isDetectingOpenRouterModels = true);
+                                        final fetched =
+                                            await LlmClassifier.listProviderModels(
+                                                provider: "openrouter",
+                                                apiKey: key);
+                                        setSheetState(() {
+                                          isDetectingOpenRouterModels = false;
+                                          if (fetched.isNotEmpty) {
+                                            openRouterModels = [
+                                              ...fetched,
+                                              {
+                                                "model": "custom",
+                                                "label":
+                                                    "✏️ Custom Model Slug...",
+                                                "isFree": true,
+                                              },
+                                            ];
+                                            final firstFree =
+                                                fetched.firstWhere(
+                                                    (m) => m["isFree"] == true,
+                                                    orElse: () =>
+                                                        fetched.first);
+                                            openRouterModelController.text =
+                                                firstFree["model"];
+                                          }
+                                        });
+                                      },
+                                borderRadius: BorderRadius.circular(6),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 6, vertical: 2),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      if (isDetectingOpenRouterModels)
+                                        const SizedBox(
+                                          width: 12,
+                                          height: 12,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2),
+                                        )
+                                      else
+                                        Icon(Icons.sync_rounded,
+                                            size: 14,
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .primary),
+                                      const SizedBox(width: 4),
+                                      TextFont(
+                                        text: isDetectingOpenRouterModels
+                                            ? "Detecting..."
+                                            : "Detect Models",
+                                        fontSize: 11,
+                                        textColor: Theme.of(context)
+                                            .colorScheme
+                                            .primary,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                           const SizedBox(height: 6),
                           Container(
@@ -667,18 +851,168 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 16, vertical: 6),
                       child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           TextInput(
                             controller: endpointController,
-                            labelText: "Ollama Endpoint (e.g. http://192.168.1.100:11434)",
+                            labelText:
+                                "Ollama Endpoint (e.g. http://192.168.1.100:11434)",
                             bubbly: false,
                           ),
                           const SizedBox(height: 8),
-                          TextInput(
-                            controller: modelController,
-                            labelText: "Model Name (e.g. llama3.2 or gemma2:2b)",
-                            bubbly: false,
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const TextFont(
+                                text: "Select Ollama Model:",
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              InkWell(
+                                onTap: isDetectingOllamaModels
+                                    ? null
+                                    : () async {
+                                        final ep =
+                                            endpointController.text.trim();
+                                        if (ep.contains("localhost") ||
+                                            ep.contains("127.0.0.1")) {
+                                          openSnackbar(
+                                            SnackbarMessage(
+                                              title: "Enter Wi-Fi IP",
+                                              description:
+                                                  "Use your computer's local Wi-Fi IP (e.g. http://192.168.1.X:11434), not localhost.",
+                                              icon: Icons.wifi_off_rounded,
+                                            ),
+                                          );
+                                          return;
+                                        }
+                                        setSheetState(() =>
+                                            isDetectingOllamaModels = true);
+                                        final fetched =
+                                            await LlmClassifier.listProviderModels(
+                                                provider: "ollama",
+                                                endpoint: ep);
+                                        setSheetState(() {
+                                          isDetectingOllamaModels = false;
+                                          if (fetched.isNotEmpty) {
+                                            ollamaModels = [
+                                              ...fetched,
+                                              {
+                                                "model": "custom",
+                                                "label":
+                                                    "✏️ Custom Model Slug...",
+                                                "isFree": true,
+                                              },
+                                            ];
+                                            modelController.text =
+                                                fetched.first["model"];
+                                          } else {
+                                            openSnackbar(
+                                              SnackbarMessage(
+                                                title: "No models found",
+                                                description:
+                                                    "Ensure Ollama is running with OLLAMA_HOST=0.0.0.0:11434 on your PC.",
+                                                icon: Icons
+                                                    .error_outline_rounded,
+                                              ),
+                                            );
+                                          }
+                                        });
+                                      },
+                                borderRadius: BorderRadius.circular(6),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 6, vertical: 2),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      if (isDetectingOllamaModels)
+                                        const SizedBox(
+                                          width: 12,
+                                          height: 12,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2),
+                                        )
+                                      else
+                                        Icon(Icons.sync_rounded,
+                                            size: 14,
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .primary),
+                                      const SizedBox(width: 4),
+                                      TextFont(
+                                        text: isDetectingOllamaModels
+                                            ? "Detecting..."
+                                            : "Detect Models",
+                                        fontSize: 11,
+                                        textColor: Theme.of(context)
+                                            .colorScheme
+                                            .primary,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
+                          const SizedBox(height: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: getColor(context, "canvasContainer"),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: getColor(context, "dividerColor")
+                                    .withOpacity(0.3),
+                              ),
+                            ),
+                            child: DropdownButtonHideUnderline(
+                              child: DropdownButton<String>(
+                                isExpanded: true,
+                                value: ollamaModels.any((m) =>
+                                        m["model"] ==
+                                        modelController.text.trim())
+                                    ? modelController.text.trim()
+                                    : (ollamaModels.isNotEmpty
+                                        ? ollamaModels.first["model"]
+                                        : "llama3.2"),
+                                borderRadius: BorderRadius.circular(12),
+                                dropdownColor:
+                                    getColor(context, "canvasContainer"),
+                                icon: const Icon(
+                                    Icons.keyboard_arrow_down_rounded),
+                                items: ollamaModels.map((item) {
+                                  return DropdownMenuItem<String>(
+                                    value: item["model"],
+                                    child: TextFont(
+                                      text: item["label"],
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      textColor: getColor(context, "black"),
+                                    ),
+                                  );
+                                }).toList(),
+                                onChanged: (newVal) {
+                                  if (newVal != null) {
+                                    setSheetState(() {
+                                      modelController.text = newVal;
+                                    });
+                                  }
+                                },
+                              ),
+                            ),
+                          ),
+                          if (modelController.text == "custom") ...[
+                            const SizedBox(height: 8),
+                            TextInput(
+                              controller: modelController,
+                              labelText:
+                                  "Custom Ollama Model Slug (e.g. deepseek-r1:8b)",
+                              bubbly: false,
+                            ),
+                          ],
                           const SizedBox(height: 4),
                           TextFont(
                             text:

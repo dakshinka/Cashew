@@ -426,72 +426,313 @@ Output ONLY the rule text to append to the system prompt.
     return _classifyWithEdgeRules(rawMessage);
   }
 
-  /// Lists available models for this Gemini API key that support generateContent, categorizing free vs paid
+  /// Unified model detection across providers
+  static Future<List<Map<String, dynamic>>> listProviderModels({
+    required String provider,
+    String? apiKey,
+    String? endpoint,
+  }) async {
+    final cleanKey = (apiKey ?? '').trim();
+    final cleanEp = (endpoint ?? '').trim();
+
+    if (provider == 'gemini') {
+      return listGeminiModels(cleanKey);
+    } else if (provider == 'groq') {
+      return listGroqModels(cleanKey);
+    } else if (provider == 'openrouter') {
+      return listOpenRouterModels(cleanKey);
+    } else if (provider == 'ollama') {
+      return listOllamaModels(cleanEp);
+    }
+    return [];
+  }
+
+  /// Lists available models for this Gemini API key, categorizing free vs paid
   static Future<List<Map<String, dynamic>>> listGeminiModels(
       String apiKey) async {
     final cleanKey = apiKey.trim();
     if (cleanKey.isEmpty) return [];
 
     final candList = <Map<String, dynamic>>[];
-    for (final apiVersion in ["v1beta", "v1", "v1alpha"]) {
+    final seen = <String>{};
+
+    // 1. Try OpenAI-compatible endpoint (identical to StudyVault)
+    try {
+      final url = Uri.parse(
+          "https://generativelanguage.googleapis.com/v1beta/openai/models");
+      final resp = await http.get(url, headers: {
+        "Authorization": "Bearer $cleanKey",
+        "x-goog-api-key": cleanKey,
+      }).timeout(const Duration(seconds: 8));
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        final models = (data["data"] ?? data["models"]) as List?;
+        if (models != null) {
+          for (final m in models) {
+            final rawId = m["id"]?.toString() ?? m["name"]?.toString() ?? "";
+            final cleanName =
+                rawId.replaceFirst(RegExp(r'^models/'), '').trim();
+            if (cleanName.isEmpty || seen.contains(cleanName)) continue;
+            seen.add(cleanName);
+            final lower = cleanName.toLowerCase();
+            final isFlash = lower.contains("flash");
+            final isExp = lower.contains("-exp") || lower.contains("preview");
+            final isFree = isFlash || isExp;
+            candList.add({
+              "model": cleanName,
+              "label": isFree
+                  ? "🟢 $cleanName (Free Tier)"
+                  : "🟡 $cleanName (Paid / Billing Required)",
+              "isFree": isFree,
+            });
+          }
+        }
+      }
+    } catch (_) {}
+
+    // 2. Try native Google endpoint fallback across API versions
+    if (candList.isEmpty) {
+      for (final apiVersion in ["v1beta", "v1", "v1alpha"]) {
+        try {
+          final url = Uri.parse(
+              "https://generativelanguage.googleapis.com/$apiVersion/models?key=${Uri.encodeQueryComponent(cleanKey)}");
+          final resp = await http.get(url, headers: {
+            "x-goog-api-key": cleanKey,
+          }).timeout(const Duration(seconds: 8));
+          if (resp.statusCode == 200) {
+            final data = jsonDecode(resp.body);
+            final models = data["models"] as List?;
+            if (models != null) {
+              for (final m in models) {
+                final rawName = m["name"]?.toString() ?? "";
+                final cleanName =
+                    rawName.replaceFirst(RegExp(r'^models/'), '').trim();
+                if (cleanName.isEmpty || seen.contains(cleanName)) continue;
+                final methods = (m["supportedGenerationMethods"] as List?)
+                        ?.map((e) => e.toString())
+                        .toList() ??
+                    [];
+                if (methods.contains("generateContent")) {
+                  seen.add(cleanName);
+                  final lower = cleanName.toLowerCase();
+                  final isFlash = lower.contains("flash");
+                  final isExp =
+                      lower.contains("-exp") || lower.contains("preview");
+                  final isFree = isFlash || isExp;
+                  candList.add({
+                    "model": cleanName,
+                    "label": isFree
+                        ? "🟢 $cleanName (Free Tier)"
+                        : "🟡 $cleanName (Paid / Billing Required)",
+                    "isFree": isFree,
+                  });
+                }
+              }
+            }
+          }
+          if (candList.isNotEmpty) break;
+        } catch (_) {}
+      }
+    }
+
+    // Sort: Free Flash models first, then Pro models
+    candList.sort((a, b) {
+      if (a["isFree"] == true && b["isFree"] != true) return -1;
+      if (a["isFree"] != true && b["isFree"] == true) return 1;
+      final aModel = a["model"] as String;
+      final bModel = b["model"] as String;
+      if (aModel.contains("flash-latest")) return -1;
+      if (bModel.contains("flash-latest")) return 1;
+      if (aModel.contains("2.5-flash")) return -1;
+      if (bModel.contains("2.5-flash")) return 1;
+      return aModel.compareTo(bModel);
+    });
+
+    return candList;
+  }
+
+  /// Lists available models for Groq
+  static Future<List<Map<String, dynamic>>> listGroqModels(
+      String apiKey) async {
+    final cleanKey = apiKey.trim();
+    if (cleanKey.isEmpty) return [];
+    try {
+      final url = Uri.parse("https://api.groq.com/openai/v1/models");
+      final resp = await http.get(url, headers: {
+        "Authorization": "Bearer $cleanKey",
+      }).timeout(const Duration(seconds: 8));
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        final list = data["data"] as List?;
+        if (list != null) {
+          final res = <Map<String, dynamic>>[];
+          for (final m in list) {
+            final id = m["id"]?.toString() ?? "";
+            if (id.isEmpty) continue;
+            // Filter out audio-only models (whisper) from text classification
+            if (id.contains("whisper")) continue;
+            res.add({
+              "model": id,
+              "label": "🟢 $id (Free)",
+              "isFree": true,
+            });
+          }
+          res.sort((a, b) {
+            final aModel = a["model"] as String;
+            final bModel = b["model"] as String;
+            if (aModel.contains("llama-3.3-70b")) return -1;
+            if (bModel.contains("llama-3.3-70b")) return 1;
+            if (aModel.contains("llama-3.1-8b")) return -1;
+            if (bModel.contains("llama-3.1-8b")) return 1;
+            return aModel.compareTo(bModel);
+          });
+          return res;
+        }
+      }
+    } catch (e) {
+      debugPrint("Groq list models error: $e");
+    }
+    return [];
+  }
+
+  /// Lists available models for OpenRouter
+  static Future<List<Map<String, dynamic>>> listOpenRouterModels(
+      String apiKey) async {
+    try {
+      final url = Uri.parse("https://openrouter.ai/api/v1/models");
+      final headers = <String, String>{};
+      if (apiKey.trim().isNotEmpty) {
+        headers["Authorization"] = "Bearer ${apiKey.trim()}";
+      }
+      final resp = await http
+          .get(url, headers: headers)
+          .timeout(const Duration(seconds: 10));
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        final list = data["data"] as List?;
+        if (list != null) {
+          final freeModels = <Map<String, dynamic>>[];
+          final paidModels = <Map<String, dynamic>>[];
+
+          for (final m in list) {
+            final id = m["id"]?.toString() ?? "";
+            if (id.isEmpty) continue;
+            final name = m["name"]?.toString() ?? id;
+            final isFree = id.endsWith(":free") ||
+                (m["pricing"] != null &&
+                    (m["pricing"]["prompt"] == 0 ||
+                        m["pricing"]["prompt"] == "0"));
+
+            final item = {
+              "model": id,
+              "label": isFree ? "🟢 $name (Free)" : "🟡 $name (Paid)",
+              "isFree": isFree,
+            };
+
+            if (isFree) {
+              freeModels.add(item);
+            } else {
+              paidModels.add(item);
+            }
+          }
+          freeModels.sort((a, b) =>
+              (a["model"] as String).compareTo(b["model"] as String));
+          return [...freeModels, ...paidModels.take(25)];
+        }
+      }
+    } catch (e) {
+      debugPrint("OpenRouter list models error: $e");
+    }
+    return [];
+  }
+
+  /// Lists downloaded models on local Ollama instance
+  static Future<List<Map<String, dynamic>>> listOllamaModels(
+      String endpoint) async {
+    final ep = endpoint.trim().isEmpty
+        ? "http://192.168.1.100:11434"
+        : endpoint.trim();
+    if (ep.contains("localhost") || ep.contains("127.0.0.1")) {
+      return [];
+    }
+    final baseUri = ep.endsWith("/") ? ep.substring(0, ep.length - 1) : ep;
+    final res = <Map<String, dynamic>>[];
+    final seen = <String>{};
+
+    // 1. Try /v1/models (standard OpenAI-compatible in Ollama)
+    try {
+      final resp = await http
+          .get(Uri.parse("$baseUri/v1/models"))
+          .timeout(const Duration(seconds: 5));
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        final list = data["data"] as List?;
+        if (list != null) {
+          for (final m in list) {
+            final id = m["id"]?.toString() ?? "";
+            if (id.isNotEmpty && !seen.contains(id)) {
+              seen.add(id);
+              res.add({
+                "model": id,
+                "label": "🟢 $id (Local)",
+                "isFree": true,
+              });
+            }
+          }
+        }
+      }
+    } catch (_) {}
+
+    // 2. Try /api/tags (native Ollama endpoint)
+    if (res.isEmpty) {
       try {
-        final url = Uri.parse(
-            "https://generativelanguage.googleapis.com/$apiVersion/models?key=${Uri.encodeQueryComponent(cleanKey)}");
-        final resp = await http.get(url, headers: {
-          "x-goog-api-key": cleanKey,
-        }).timeout(const Duration(seconds: 8));
+        final resp = await http
+            .get(Uri.parse("$baseUri/api/tags"))
+            .timeout(const Duration(seconds: 5));
         if (resp.statusCode == 200) {
           final data = jsonDecode(resp.body);
-          final models = data["models"] as List?;
-          if (models != null) {
-            for (final m in models) {
-              final rawName = m["name"]?.toString() ?? "";
-              final cleanName = rawName.replaceFirst("models/", "").trim();
-              final methods = (m["supportedGenerationMethods"] as List?)
-                      ?.map((e) => e.toString())
-                      .toList() ??
-                  [];
-              if (methods.contains("generateContent")) {
-                final lower = cleanName.toLowerCase();
-                final isFlash = lower.contains("flash");
-                final isExp = lower.contains("-exp") || lower.contains("preview");
-                final isFree = isFlash || isExp;
-                candList.add({
-                  "model": cleanName,
-                  "label": isFree
-                      ? "$cleanName (Free)"
-                      : "$cleanName (Paid / Billing Required)",
-                  "isFree": isFree,
-                  "apiVersion": apiVersion,
+          final list = data["models"] as List?;
+          if (list != null) {
+            for (final m in list) {
+              final name = m["name"]?.toString() ?? "";
+              if (name.isNotEmpty && !seen.contains(name)) {
+                seen.add(name);
+                res.add({
+                  "model": name,
+                  "label": "🟢 $name (Local)",
+                  "isFree": true,
                 });
               }
             }
           }
         }
-        if (candList.isNotEmpty) break;
       } catch (_) {}
     }
-    return candList;
+    return res;
   }
 
-  /// Google Gemini (Customizable model with automatic v1/v1beta fallback & model discovery)
+  /// Google Gemini (Customizable model with automatic OpenAI endpoint & native generateContent fallback)
   static Future<LlmClassificationResult?> _classifyWithGemini(
       String rawMessage, String apiKey, {String? model}) async {
     final cleanApiKey = apiKey.trim();
-    final requestedModel = (model != null && model.isNotEmpty)
+    final rawRequestedModel = (model != null && model.isNotEmpty)
         ? model.replaceFirst(RegExp(r'^models/'), '').trim()
         : (appStateSettings["geminiModel"]?.toString().trim().isNotEmpty == true
             ? appStateSettings["geminiModel"]!
                 .toString()
                 .trim()
                 .replaceFirst(RegExp(r'^models/'), '')
-            : "gemini-2.5-flash");
+            : "gemini-flash-latest");
 
-    // Try candidate models: requested model first, then common Flash and Pro models
+    final requestedModel =
+        rawRequestedModel.isEmpty ? "gemini-flash-latest" : rawRequestedModel;
+
+    // Prioritized candidates (following StudyVault preset pattern)
     final candidateModels = [
       requestedModel,
+      if (requestedModel != "gemini-flash-latest") "gemini-flash-latest",
       if (requestedModel != "gemini-2.5-flash") "gemini-2.5-flash",
-      if (requestedModel != "gemini-1.5-flash-latest") "gemini-1.5-flash-latest",
+      if (requestedModel != "gemini-flash-lite-latest") "gemini-flash-lite-latest",
       if (requestedModel != "gemini-1.5-flash") "gemini-1.5-flash",
       if (requestedModel != "gemini-2.0-flash-exp") "gemini-2.0-flash-exp",
     ];
@@ -500,6 +741,60 @@ Output ONLY the rule text to append to the system prompt.
 
     for (final candidate in candidateModels) {
       final cleanCand = candidate.replaceFirst(RegExp(r'^models/'), '').trim();
+
+      // Method 1: OpenAI-compatible chat completions (like StudyVault)
+      try {
+        final openAiUrl = Uri.parse(
+            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions");
+        final openAiResp = await http
+            .post(
+              openAiUrl,
+              headers: {
+                "Content-Type": "application/json",
+                "Authorization": "Bearer $cleanApiKey",
+                "x-goog-api-key": cleanApiKey,
+              },
+              body: jsonEncode({
+                "model": cleanCand,
+                "temperature": 0.1,
+                "messages": [
+                  {"role": "system", "content": getSystemPrompt()},
+                  {
+                    "role": "user",
+                    "content": "SMS TO CLASSIFY:\n\"\"\"$rawMessage\"\"\""
+                  }
+                ],
+                "response_format": {"type": "json_object"},
+                "max_tokens": 1024,
+              }),
+            )
+            .timeout(const Duration(seconds: 12));
+
+        if (openAiResp.statusCode == 200) {
+          final jsonBody = jsonDecode(openAiResp.body);
+          final text = jsonBody["choices"]?[0]?["message"]?["content"];
+          if (text != null) {
+            lastAiError = null;
+            if (cleanCand != requestedModel) {
+              await updateSettings("geminiModel", cleanCand,
+                  updateGlobalState: false);
+            }
+            return _parseJsonResponse(text,
+                rawMessage: rawMessage, provider: "Gemini ($cleanCand)");
+          }
+        } else {
+          try {
+            final errJson = jsonDecode(openAiResp.body);
+            lastDetail = errJson["error"]?["message"] ?? openAiResp.body;
+          } catch (_) {
+            lastDetail = "HTTP ${openAiResp.statusCode}: ${openAiResp.body}";
+          }
+        }
+      } catch (e) {
+        lastDetail = e.toString();
+      }
+
+      // Method 2: Native Google generateContent fallback
       for (final apiVersion in ["v1beta", "v1", "v1alpha"]) {
         final url = Uri.parse(
             "https://generativelanguage.googleapis.com/$apiVersion/models/$cleanCand:generateContent?key=${Uri.encodeQueryComponent(cleanApiKey)}");
@@ -535,7 +830,8 @@ Output ONLY the rule text to append to the system prompt.
 
           if (response.statusCode == 200) {
             final jsonBody = jsonDecode(response.body);
-            final text = jsonBody["candidates"]?[0]?["content"]?["parts"]?[0]?["text"];
+            final text = jsonBody["candidates"]?[0]?["content"]?["parts"]?[0]
+                ?["text"];
             if (text != null) {
               lastAiError = null;
               if (cleanCand != requestedModel) {
@@ -551,11 +847,6 @@ Output ONLY the rule text to append to the system prompt.
               lastDetail = errJson["error"]?["message"] ?? response.body;
             } catch (_) {
               lastDetail = "HTTP ${response.statusCode}: ${response.body}";
-            }
-            if (response.statusCode != 404) {
-              lastAiError = "Gemini ($cleanCand): $lastDetail";
-              debugPrint("Gemini classification failed: $lastAiError");
-              return null;
             }
           }
         } catch (e) {
@@ -584,8 +875,9 @@ Output ONLY the rule text to append to the system prompt.
                 ? "🟢 Free models available for your key: ${freeList.join(', ')}\n"
                 : "") +
             (paidList.isNotEmpty
-                ? "🟡 Paid / billing required: ${paidList.join(', ')}"
-                : "");
+                ? "🟡 Paid / billing required: ${paidList.join(', ')}\n"
+                : "") +
+            "Tip: Select 'gemini-flash-latest' or 'gemini-2.5-flash' in AI Settings.";
       } else {
         lastAiError =
             "Gemini API key is invalid or Generative Language API is not enabled in your Google Cloud / AI Studio project.\nDetail: $lastDetail";
