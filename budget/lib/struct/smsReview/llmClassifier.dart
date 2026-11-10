@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:budget/struct/settings.dart';
 import 'package:budget/struct/smsReview/smsParser.dart';
@@ -15,6 +16,7 @@ class LlmClassificationResult {
   final String? accountHint;
   final double confidence;
   final String? reasoning;
+  final String? providerUsed;
 
   LlmClassificationResult({
     required this.isTransaction,
@@ -28,10 +30,13 @@ class LlmClassificationResult {
     this.accountHint,
     this.confidence = 0.95,
     this.reasoning,
+    this.providerUsed,
   });
 }
 
 class LlmClassifier {
+  /// Stores the most recent diagnostic error message from any AI provider attempt
+  static String? lastAiError;
   static const String defaultSystemPrompt = '''
 You are an expert financial transaction classification assistant for personal banking and SMS parsing.
 Analyze whether the SMS or notification text is an ACTUAL completed financial transaction (money spent, debited, or credited/received), or if it is an advertisement, loan offer, account balance inquiry, informational alert, bill reminder, or OTP.
@@ -91,10 +96,12 @@ Output ONLY valid JSON matching this schema:
 
     String learnedRule = "- Example: \"\"\"$rawMessage\"\"\" -> isTransaction: true. Even if starting with 'Update!' or containing remarks like 'subject to clearing', recognize the credit/deposit.";
 
+    final geminiModel = appStateSettings["geminiModel"]?.toString().trim() ?? "gemini-1.5-flash";
+
     if (provider == "gemini" && key != null && key.isNotEmpty) {
       try {
         final url = Uri.parse(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$key");
+            "https://generativelanguage.googleapis.com/v1beta/models/$geminiModel:generateContent?key=$key");
         final prompt = '''
 You are an expert financial classification assistant.
 The user flagged this SMS as a REAL financial transaction that was previously missed or misclassified:
@@ -184,7 +191,50 @@ Output ONLY the rule text to append to the system prompt.
     await updateSettings("customAiPrompt", "", updateGlobalState: true);
   }
 
-  /// Classify using configured AI model (Gemini free, local Ollama, or edge fallback)
+  /// Single provider execution helper
+  static Future<LlmClassificationResult?> _tryClassify(
+      String provider, String rawMessage) async {
+    try {
+      if (provider == "gemini") {
+        final key = appStateSettings["geminiApiKey"]?.toString().trim();
+        final model = appStateSettings["geminiModel"]?.toString().trim();
+        if (key != null && key.isNotEmpty) {
+          return await _classifyWithGemini(rawMessage, key, model: model);
+        } else {
+          lastAiError = "Gemini API key is missing. Tap the brain icon in Review Inbox to paste your key.";
+        }
+      } else if (provider == "groq") {
+        final key = appStateSettings["groqApiKey"]?.toString().trim();
+        final model = appStateSettings["groqModel"]?.toString().trim();
+        if (key != null && key.isNotEmpty) {
+          return await _classifyWithGroq(rawMessage, key, model: model);
+        } else {
+          lastAiError = "Groq API key is missing. Tap the brain icon in Review Inbox to paste your key.";
+        }
+      } else if (provider == "openrouter") {
+        final key = appStateSettings["openRouterApiKey"]?.toString().trim();
+        final model = appStateSettings["openRouterModel"]?.toString().trim();
+        if (key != null && key.isNotEmpty) {
+          return await _classifyWithOpenRouter(rawMessage, key, model: model);
+        } else {
+          lastAiError = "OpenRouter API key is missing. Tap the brain icon in Review Inbox to paste your key.";
+        }
+      } else if (provider == "ollama") {
+        final endpoint =
+            appStateSettings["ollamaEndpoint"]?.toString().trim() ??
+                "http://localhost:11434";
+        final model = appStateSettings["ollamaModel"]?.toString().trim() ??
+            "llama3.2";
+        return await _classifyWithOllama(rawMessage, endpoint, model);
+      }
+    } catch (e) {
+      lastAiError = "$provider connection error: $e";
+      debugPrint("Provider $provider classification error: $e");
+    }
+    return null;
+  }
+
+  /// Classify using configured AI model with automatic multi-provider failover
   static Future<LlmClassificationResult?> classify(String rawMessage) async {
     // 0. Pre-filter informational notices, e-mandates, or non-transactions
     if (SmsParser.isInformationalOrFutureNotice(rawMessage)) {
@@ -198,50 +248,63 @@ Output ONLY the rule text to append to the system prompt.
       );
     }
 
-    final provider = appStateSettings["aiProvider"]?.toString() ?? "none";
+    final primaryProvider =
+        appStateSettings["aiProvider"]?.toString() ?? "none";
 
-    if (provider == "gemini") {
-      final key = appStateSettings["geminiApiKey"]?.toString().trim();
-      if (key != null && key.isNotEmpty) {
-        try {
-          return await _classifyWithGemini(rawMessage, key);
-        } catch (_) {}
-      }
-    } else if (provider == "groq") {
-      final key = appStateSettings["groqApiKey"]?.toString().trim();
-      final model = appStateSettings["groqModel"]?.toString().trim();
-      if (key != null && key.isNotEmpty) {
-        try {
-          return await _classifyWithGroq(rawMessage, key, model: model);
-        } catch (_) {}
-      }
-    } else if (provider == "openrouter") {
-      final key = appStateSettings["openRouterApiKey"]?.toString().trim();
-      final model = appStateSettings["openRouterModel"]?.toString().trim();
-      if (key != null && key.isNotEmpty) {
-        try {
-          return await _classifyWithOpenRouter(rawMessage, key, model: model);
-        } catch (_) {}
-      }
-    } else if (provider == "ollama") {
-      final endpoint = appStateSettings["ollamaEndpoint"]?.toString().trim() ??
-          "http://localhost:11434";
-      final model = appStateSettings["ollamaModel"]?.toString().trim() ??
-          "llama3.2";
-      try {
-        return await _classifyWithOllama(rawMessage, endpoint, model);
-      } catch (_) {}
+    // 1. Try primary provider first (if not "none")
+    if (primaryProvider != "none") {
+      final res = await _tryClassify(primaryProvider, rawMessage);
+      if (res != null) return res;
     }
 
-    // Default: use the enhanced deterministic edge rule parser
+    // 2. Automatic Failover: Try other providers if configured
+    const allProviders = ["groq", "gemini", "openrouter", "ollama"];
+    for (final p in allProviders) {
+      if (p == primaryProvider) continue;
+      bool hasCredentials = false;
+      if (p == "groq") {
+        hasCredentials =
+            (appStateSettings["groqApiKey"]?.toString().trim().isNotEmpty ??
+                false);
+      } else if (p == "gemini") {
+        hasCredentials =
+            (appStateSettings["geminiApiKey"]?.toString().trim().isNotEmpty ??
+                false);
+      } else if (p == "openrouter") {
+        hasCredentials = (appStateSettings["openRouterApiKey"]
+                ?.toString()
+                .trim()
+                .isNotEmpty ??
+            false);
+      } else if (p == "ollama") {
+        hasCredentials = (appStateSettings["ollamaEndpoint"]
+                ?.toString()
+                .trim()
+                .isNotEmpty ??
+            false);
+      }
+
+      if (hasCredentials) {
+        final failoverRes = await _tryClassify(p, rawMessage);
+        if (failoverRes != null) {
+          debugPrint("⚡ Fallback succeeded with provider: $p");
+          return failoverRes;
+        }
+      }
+    }
+
+    // 3. Final Default: 100% offline edge rule parser
     return _classifyWithEdgeRules(rawMessage);
   }
 
-  /// Google Gemini 1.5 Flash (Free Tier)
+  /// Google Gemini (Customizable model, e.g. gemini-1.5-flash, gemini-2.0-flash, gemini-1.5-pro)
   static Future<LlmClassificationResult?> _classifyWithGemini(
-      String rawMessage, String apiKey) async {
+      String rawMessage, String apiKey, {String? model}) async {
+    final activeModel = (model != null && model.isNotEmpty)
+        ? model
+        : "gemini-1.5-flash";
     final url = Uri.parse(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$apiKey");
+        "https://generativelanguage.googleapis.com/v1beta/models/$activeModel:generateContent?key=$apiKey");
 
     final response = await http
         .post(
@@ -263,14 +326,27 @@ Output ONLY the rule text to append to the system prompt.
             }
           }),
         )
-        .timeout(const Duration(seconds: 10));
+        .timeout(const Duration(seconds: 12));
 
     if (response.statusCode == 200) {
       final jsonBody = jsonDecode(response.body);
       final text = jsonBody["candidates"]?[0]?["content"]?["parts"]?[0]?["text"];
       if (text != null) {
-        return _parseJsonResponse(text, rawMessage: rawMessage);
+        lastAiError = null;
+        return _parseJsonResponse(text,
+            rawMessage: rawMessage, provider: "Gemini ($activeModel)");
       }
+    } else {
+      String detail = "Gemini HTTP ${response.statusCode}";
+      try {
+        final errJson = jsonDecode(response.body);
+        final msg = errJson["error"]?["message"];
+        if (msg != null) detail = "Gemini: $msg";
+      } catch (_) {
+        detail = "Gemini HTTP ${response.statusCode}: ${response.body}";
+      }
+      lastAiError = detail;
+      debugPrint("Gemini classification failed: $detail");
     }
     return null;
   }
@@ -309,8 +385,21 @@ Output ONLY the rule text to append to the system prompt.
       final jsonBody = jsonDecode(response.body);
       final text = jsonBody["choices"]?[0]?["message"]?["content"];
       if (text != null) {
-        return _parseJsonResponse(text, rawMessage: rawMessage);
+        lastAiError = null;
+        return _parseJsonResponse(text,
+            rawMessage: rawMessage, provider: "Groq ($activeModel)");
       }
+    } else {
+      String detail = "Groq HTTP ${response.statusCode}";
+      try {
+        final errJson = jsonDecode(response.body);
+        final msg = errJson["error"]?["message"];
+        if (msg != null) detail = "Groq: $msg";
+      } catch (_) {
+        detail = "Groq HTTP ${response.statusCode}: ${response.body}";
+      }
+      lastAiError = detail;
+      debugPrint("Groq classification failed: $detail");
     }
     return null;
   }
@@ -351,8 +440,21 @@ Output ONLY the rule text to append to the system prompt.
       final jsonBody = jsonDecode(response.body);
       final text = jsonBody["choices"]?[0]?["message"]?["content"];
       if (text != null) {
-        return _parseJsonResponse(text, rawMessage: rawMessage);
+        lastAiError = null;
+        return _parseJsonResponse(text,
+            rawMessage: rawMessage, provider: "OpenRouter ($activeModel)");
       }
+    } else {
+      String detail = "OpenRouter HTTP ${response.statusCode}";
+      try {
+        final errJson = jsonDecode(response.body);
+        final msg = errJson["error"]?["message"];
+        if (msg != null) detail = "OpenRouter: $msg";
+      } catch (_) {
+        detail = "OpenRouter HTTP ${response.statusCode}: ${response.body}";
+      }
+      lastAiError = detail;
+      debugPrint("OpenRouter classification failed: $detail");
     }
     return null;
   }
@@ -382,15 +484,19 @@ Output ONLY the rule text to append to the system prompt.
       final jsonBody = jsonDecode(response.body);
       final responseText = jsonBody["response"];
       if (responseText != null) {
-        return _parseJsonResponse(responseText, rawMessage: rawMessage);
+        lastAiError = null;
+        return _parseJsonResponse(responseText,
+            rawMessage: rawMessage, provider: "Ollama ($model)");
       }
+    } else {
+      lastAiError = "Ollama HTTP ${response.statusCode}: ${response.body}";
     }
     return null;
   }
 
-  /// Parses JSON output from either Gemini or Ollama
+  /// Parses JSON output from either Gemini, Groq, OpenRouter or Ollama
   static LlmClassificationResult? _parseJsonResponse(String jsonString,
-      {String? rawMessage}) {
+      {String? rawMessage, String? provider}) {
     try {
       String clean = jsonString.trim();
       if (clean.startsWith("```json")) {
@@ -442,6 +548,7 @@ Output ONLY the rule text to append to the system prompt.
         accountHint: accountHint,
         confidence: confidence,
         reasoning: reasoning,
+        providerUsed: provider,
       );
     } catch (_) {
       return null;
@@ -459,6 +566,7 @@ Output ONLY the rule text to append to the system prompt.
         currency: "₹",
         merchant: "",
         category: "Other",
+        providerUsed: "Built-in Edge Rules (Offline)",
       );
     }
 
@@ -473,6 +581,7 @@ Output ONLY the rule text to append to the system prompt.
       date: parsed.date,
       accountHint: parsed.accountHint,
       confidence: 0.85,
+      providerUsed: "Built-in Edge Rules (Offline)",
     );
   }
 }

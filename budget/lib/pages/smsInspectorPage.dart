@@ -12,6 +12,7 @@ import 'package:budget/struct/smsReview/smsParser.dart';
 import 'package:budget/struct/smsReview/llmClassifier.dart';
 import 'package:budget/struct/smsReview/reviewManager.dart';
 import 'package:budget/struct/smsReview/smsInboxScanner.dart';
+import 'package:budget/pages/reviewInboxPage.dart';
 
 class SmsInspectorPage extends StatefulWidget {
   const SmsInspectorPage({Key? key}) : super(key: key);
@@ -68,8 +69,10 @@ class _SmsInspectorPageState extends State<SmsInspectorPage> {
 
             final res = snapshot.data;
             if (res == null) {
+              final errDetail = LlmClassifier.lastAiError ??
+                  (snapshot.hasError ? snapshot.error.toString() : null);
               return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 24.0),
+                padding: const EdgeInsets.symmetric(vertical: 20.0),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -81,11 +84,40 @@ class _SmsInspectorPageState extends State<SmsInspectorPage> {
                       fontWeight: FontWeight.bold,
                     ),
                     const SizedBox(height: 6),
+                    if (errDetail != null && errDetail.isNotEmpty) ...[
+                      Container(
+                        margin: const EdgeInsets.symmetric(vertical: 8),
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.red.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: TextFont(
+                          text: errDetail,
+                          fontSize: 12,
+                          textColor: Colors.redAccent,
+                          textAlign: TextAlign.center,
+                          maxLines: 4,
+                        ),
+                      ),
+                    ],
                     TextFont(
-                      text: "Check if your Gemini API Key or Ollama endpoint is active in Review Inbox settings.",
+                      text:
+                          "Check if your API key (Gemini, Groq, or OpenRouter) is set and valid.",
                       fontSize: 13,
                       textColor: getColor(context, "textLight"),
                       textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 16),
+                    Button(
+                      label: "Configure AI Keys & Provider",
+                      icon: Icons.psychology_outlined,
+                      color: Theme.of(context).colorScheme.primary,
+                      textColor: Theme.of(context).colorScheme.onPrimary,
+                      onTap: () {
+                        Navigator.of(context).pop();
+                        ReviewInboxPage.showAiModelSettingsDialog(context);
+                      },
                     ),
                   ],
                 ),
@@ -111,6 +143,9 @@ class _SmsInspectorPageState extends State<SmsInspectorPage> {
                   ),
                   const SizedBox(height: 14),
                   _diagRow("Is Transaction", res.isTransaction ? "YES" : "NO",
+                      isHighlighted: true),
+                  _diagRow("Engine / Provider",
+                      res.providerUsed ?? "AI Classifier",
                       isHighlighted: true),
                   _diagRow("Transaction Type", res.transactionType),
                   _diagRow("Amount", "${res.currency} ${res.amount}"),

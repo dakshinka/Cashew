@@ -28,6 +28,14 @@ import 'package:budget/widgets/textWidgets.dart';
 class ReviewInboxPage extends StatefulWidget {
   const ReviewInboxPage({Key? key}) : super(key: key);
 
+  static void showAiModelSettingsDialog(BuildContext context,
+          {VoidCallback? onSaved}) =>
+      _ReviewInboxPageState.showAiModelSettingsDialog(context,
+          onSaved: onSaved);
+
+  static void showEditAiPromptDialog(BuildContext context) =>
+      _ReviewInboxPageState.showEditAiPromptDialog(context);
+
   @override
   State<ReviewInboxPage> createState() => _ReviewInboxPageState();
 }
@@ -61,10 +69,20 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
   }
 
   void _showAiModelSettingsDialog() {
+    showAiModelSettingsDialog(context, onSaved: () {
+      if (mounted) setState(() {});
+    });
+  }
+
+  static void showAiModelSettingsDialog(BuildContext context,
+      {VoidCallback? onSaved}) {
     String selectedProvider =
         appStateSettings["aiProvider"]?.toString() ?? "none";
     final apiKeyController = TextEditingController(
       text: appStateSettings["geminiApiKey"]?.toString() ?? "",
+    );
+    final geminiModelController = TextEditingController(
+      text: appStateSettings["geminiModel"]?.toString() ?? "gemini-1.5-flash",
     );
     final groqApiKeyController = TextEditingController(
       text: appStateSettings["groqApiKey"]?.toString() ?? "",
@@ -167,10 +185,16 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
                             labelText: "Gemini API Key (AIzaSy...)",
                             bubbly: false,
                           ),
+                          const SizedBox(height: 8),
+                          TextInput(
+                            controller: geminiModelController,
+                            labelText: "Model Name (default: gemini-1.5-flash)",
+                            bubbly: false,
+                          ),
                           const SizedBox(height: 4),
                           TextFont(
                             text:
-                                "Get free key: https://aistudio.google.com/ (no credit card required)",
+                                "Free usage: 15 req/min, 1,500 req/day (gemini-1.5-flash, gemini-2.0-flash).\nGet free key: https://aistudio.google.com/ (no card needed)",
                             fontSize: 11,
                             textColor: getColor(context, "textLight"),
                           ),
@@ -215,7 +239,7 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
                           ),
                           const SizedBox(height: 4),
                           TextFont(
-                            text: "Get free key: https://console.groq.com/keys",
+                            text: "Free usage: 30 req/min, 14,400 req/day, ~300 tok/s.\nGet free key: https://console.groq.com/keys",
                             fontSize: 11,
                             textColor: getColor(context, "textLight"),
                           ),
@@ -260,7 +284,7 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
                           ),
                           const SizedBox(height: 4),
                           TextFont(
-                            text: "Get key: https://openrouter.ai/keys",
+                            text: "Free models: Append ':free' (e.g. meta-llama/llama-3.3-70b-instruct:free or google/gemini-2.0-flash-exp:free).\nGet key: https://openrouter.ai/keys",
                             fontSize: 11,
                             textColor: getColor(context, "textLight"),
                           ),
@@ -307,6 +331,38 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
                     ),
                   ],
                   const SizedBox(height: 12),
+                  Container(
+                    margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.primary.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: Theme.of(context).colorScheme.primary.withOpacity(0.2),
+                      ),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.flash_on_rounded,
+                          size: 18,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextFont(
+                            text:
+                                "Automatic Failover: If your chosen primary provider hits rate limits or encounters an error, Cashew automatically routes through your other configured providers and falls back safely to Built-in Edge Rules.",
+                            fontSize: 11,
+                            textColor: getColor(context, "textLight"),
+                            maxLines: 4,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
                   Button(
                     label: "View & Edit AI Prompt",
                     icon: Icons.edit_note_rounded,
@@ -315,7 +371,7 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
                     expandedLayout: true,
                     onTap: () {
                       Navigator.of(context).pop();
-                      _showEditAiPromptDialog();
+                      showEditAiPromptDialog(context);
                     },
                   ),
                   const SizedBox(height: 16),
@@ -344,6 +400,11 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
                             await updateSettings(
                               "geminiApiKey",
                               apiKeyController.text.trim(),
+                              updateGlobalState: false,
+                            );
+                            await updateSettings(
+                              "geminiModel",
+                              geminiModelController.text.trim(),
                               updateGlobalState: false,
                             );
                             await updateSettings(
@@ -377,12 +438,12 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
                               updateGlobalState: false,
                             );
                             Navigator.of(context).pop();
-                            setState(() {});
+                            onSaved?.call();
                             openSnackbar(
                               SnackbarMessage(
                                 title: "AI Settings Saved",
                                 description: selectedProvider == "gemini"
-                                    ? "Active: Google Gemini Cloud"
+                                    ? "Active: Google Gemini (${geminiModelController.text.trim()})"
                                     : selectedProvider == "groq"
                                         ? "Active: Groq (${groqModelController.text.trim()})"
                                         : selectedProvider == "openrouter"
@@ -408,7 +469,7 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
     );
   }
 
-  void _showEditAiPromptDialog() {
+  static void showEditAiPromptDialog(BuildContext context) {
     final promptController =
         TextEditingController(text: LlmClassifier.getSystemPrompt());
     openBottomSheet(
