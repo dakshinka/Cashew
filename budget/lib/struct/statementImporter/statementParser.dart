@@ -446,6 +446,16 @@ Respond ONLY with valid JSON array:
     return [];
   }
 
+  /// Determines whether a bank transaction narration represents an ATM or cash withdrawal
+  static bool isCashWithdrawalNarration(String narration) {
+    final lower = narration.toLowerCase();
+    final regex = RegExp(
+      r'\b(atm|cash\s*(?:wdl|withdrawal|dispense|w\/d)|nfs\*atm|cwdr|matm|self\s*wdl|euronet|atm-cash|cash-wdl|pos\s*cash)\b',
+      caseSensitive: false,
+    );
+    return regex.hasMatch(lower);
+  }
+
   /// Shared engine that maps tabular rows into StatementEntry items
   static Future<List<StatementEntry>> parseRows(
     List<List<dynamic>> rows, {
@@ -519,9 +529,13 @@ Respond ONLY with valid JSON array:
         bal = parseAmount(row[indices.balanceCol!].toString());
       }
 
-      // AI Cleans the merchant and assigns category
-      final cleanMerchant = AiCategorizer.cleanMerchantName(rawNarr);
-      final aiSuggestion = await AiCategorizer.suggestCategory(cleanMerchant);
+      // Check for Cash / ATM withdrawal
+      final isCash = isCashWithdrawalNarration(rawNarr);
+      final cleanMerchant = isCash
+          ? "ATM Cash Withdrawal"
+          : AiCategorizer.cleanMerchantName(rawNarr);
+      final aiSuggestion = await AiCategorizer.suggestCategory(cleanMerchant,
+          isIncome: isIncome);
 
       entries.add(
         StatementEntry(
@@ -532,9 +546,12 @@ Respond ONLY with valid JSON array:
           isIncome: isIncome,
           referenceNo: refNo,
           balance: bal,
-          suggestedCategoryName: aiSuggestion.categoryName,
+          suggestedCategoryName:
+              isCash ? "Cash & ATM" : aiSuggestion.categoryName,
           suggestedCategoryPk: aiSuggestion.categoryPk,
-          confidence: aiSuggestion.confidence,
+          confidence: isCash ? 0.99 : aiSuggestion.confidence,
+          isCashWithdrawal: isCash,
+          isTransferToCash: isCash,
         ),
       );
     }
@@ -587,6 +604,7 @@ Respond ONLY with valid JSON array:
 
         if (diffDays <= 1 && amountMatches && typeMatches) {
           entry.duplicateState = DuplicateState.confirmedDuplicate;
+          entry.matchedSource = 'database';
           entry.isSelected = false; // Deselect already-reconciled items
           entry.duplicateReason =
               "Reconciled with existing '${tx.name}' (${DateFormat('dd MMM').format(tx.dateCreated)})";
@@ -604,6 +622,7 @@ Respond ONLY with valid JSON array:
 
           if (diffDays <= 1 && amountMatches && typeMatches) {
             entry.duplicateState = DuplicateState.potentialDuplicate;
+            entry.matchedSource = 'review_inbox';
             entry.isSelected = false;
             entry.duplicateReason =
                 "Matches pending SMS in Review Inbox: '${item.cleanMerchant}' (${DateFormat('dd MMM').format(item.date)})";
@@ -615,6 +634,7 @@ Respond ONLY with valid JSON array:
 
       if (!matched) {
         entry.duplicateState = DuplicateState.unique;
+        entry.matchedSource = null;
         entry.isSelected = true; // Selected by default to import missing transactions!
         entry.duplicateReason = "Missing from account (No SMS or record found)";
       }

@@ -24,6 +24,13 @@ class StatementEntry {
   DuplicateState duplicateState;
   String? duplicateReason;
 
+  // User control & cash reconciliation fields
+  bool isCashWithdrawal;
+  bool isTransferToCash;
+  String? destinationWalletPk;
+  bool isUserReviewed;
+  String? matchedSource;
+
   StatementEntry({
     String? id,
     required this.date,
@@ -39,6 +46,11 @@ class StatementEntry {
     this.isSelected = true,
     this.duplicateState = DuplicateState.unique,
     this.duplicateReason,
+    this.isCashWithdrawal = false,
+    this.isTransferToCash = false,
+    this.destinationWalletPk,
+    this.isUserReviewed = false,
+    this.matchedSource,
   }) : id = id ?? _uuid.v4();
 }
 
