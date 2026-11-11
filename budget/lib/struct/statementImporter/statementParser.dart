@@ -1,4 +1,3 @@
-import 'package:budget/database/tables.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/smsReview/aiCategorizer.dart';
 import 'package:budget/struct/statementImporter/statementModels.dart';
@@ -75,8 +74,8 @@ class StatementParser {
     final indices = StatementColumnIndices();
     if (rows.isEmpty) return indices;
 
-    // Scan the first 15 rows to find the actual header row
-    for (int r = 0; r < rows.length && r < 15; r++) {
+    // Scan the first 50 rows to find the actual table header row (accommodates bank metadata, branch, and customer details)
+    for (int r = 0; r < rows.length && r < 50; r++) {
       final row = rows[r].map((e) => e.toString().trim().toLowerCase()).toList();
 
       int matchCount = 0;
@@ -189,13 +188,29 @@ class StatementParser {
     StatementColumnIndices? customIndices,
     String? targetWalletPk,
   }) async {
-    const converter = CsvToListConverter(
+    // Normalize Windows CRLF
+    final normalized =
+        csvContent.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+
+    // Auto-detect delimiter: comma, tab (copied from Excel/Sheets), or semicolon
+    String delimiter = ',';
+    final sampleLines = normalized.split('\n').take(15).join('\n');
+    final commaCount = ','.allMatches(sampleLines).length;
+    final tabCount = '\t'.allMatches(sampleLines).length;
+    final semiCount = ';'.allMatches(sampleLines).length;
+
+    if (tabCount > commaCount && tabCount > semiCount) {
+      delimiter = '\t';
+    } else if (semiCount > commaCount && semiCount > tabCount) {
+      delimiter = ';';
+    }
+
+    final converter = CsvToListConverter(
+      fieldDelimiter: delimiter,
       shouldParseNumbers: false,
       eol: '\n',
     );
 
-    // Normalize Windows CRLF
-    final normalized = csvContent.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
     final rows = converter.convert(normalized);
 
     if (rows.isEmpty) return [];

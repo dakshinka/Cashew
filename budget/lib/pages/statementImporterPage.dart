@@ -15,10 +15,8 @@ import 'package:budget/struct/statementImporter/statementParser.dart';
 import 'package:budget/widgets/button.dart';
 import 'package:budget/widgets/framework/pageFramework.dart';
 import 'package:budget/widgets/openBottomSheet.dart';
-import 'package:budget/widgets/openPopup.dart';
 import 'package:budget/widgets/openSnackbar.dart';
 import 'package:budget/widgets/globalSnackbar.dart';
-import 'package:budget/widgets/selectChips.dart';
 import 'package:budget/widgets/textInput.dart';
 import 'package:budget/widgets/textWidgets.dart';
 
@@ -45,7 +43,7 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['csv', 'txt'],
+        allowedExtensions: ['csv', 'txt', 'tsv'],
       );
 
       if (result == null || result.files.isEmpty) return;
