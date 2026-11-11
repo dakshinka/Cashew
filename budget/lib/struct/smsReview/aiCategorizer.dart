@@ -85,10 +85,18 @@ class AiCategorizer {
     var clean = raw.trim();
 
     // Remove common prefixes
-    final prefixes = ["VPA ", "UPI/", "POS ", "AT ", "TO ", "BY "];
+    final prefixes = ["VPA ", "UPI/", "UPI-", "UPI - ", "POS ", "AT ", "TO ", "BY "];
     for (final p in prefixes) {
-      if (clean.toUpperCase().startsWith(p)) {
+      if (clean.toUpperCase().startsWith(p.toUpperCase())) {
         clean = clean.substring(p.length).trim();
+      }
+    }
+
+    // Strip common transaction type markers
+    final typeMarkers = ["AUTOPAY-", "AUTOPAY ", "MANDATE-", "MANDATE "];
+    for (final m in typeMarkers) {
+      if (clean.toUpperCase().startsWith(m)) {
+        clean = clean.substring(m.length).trim();
       }
     }
 

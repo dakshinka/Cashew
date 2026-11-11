@@ -663,29 +663,113 @@ class StatementParser {
     return "Bank Transfer";
   }
 
+  static const Set<String> _invalidRefWords = {
+    'AUTOPAY', 'MANDATE', 'TRANSFER', 'REFUND', 'REVERSAL',
+    'RETURN', 'COLLECT', 'BILLPAY', 'BILL', 'MERCHANT',
+    'PAYMENT', 'CREDIT', 'DEBIT', 'ONLINE', 'NETBANKING',
+    'IMPS', 'NEFT', 'RTGS', 'UPI', 'PENDING', 'SUCCESS', 'FAILED',
+    'KAMARAJ', 'MUTUAL', 'FUNDS', 'SALARY', 'INVOICE', 'PURCHASE'
+  };
+
+  /// Verifies if an extracted string represents a genuine banking reference ID.
+  /// A valid banking reference (UPI RRN, UTR, Cheque No, Txn ID):
+  /// - Must be 6 to 30 characters long
+  /// - Must contain at least 2 numeric digits (never pure words like "AUTOPAY")
+  /// - Must not be a known banking keyword
+  static bool isValidReferenceId(String? ref) {
+    if (ref == null) return false;
+    final clean = ref.trim().toUpperCase();
+    if (clean.length < 6 || clean.length > 30) return false;
+    // Must contain at least 2 digits to be a legitimate banking transaction ID / RRN / UTR
+    final digitCount = clean.replaceAll(RegExp(r'[^0-9]'), '').length;
+    if (digitCount < 2) return false;
+    // Cannot be a known banking keyword
+    if (_invalidRefWords.contains(clean)) return false;
+    return true;
+  }
+
+  /// Normalizes reference ID for robust comparison across statements and SMS:
+  /// - Trims and converts to uppercase
+  /// - Strips leading zeros from numeric or padded strings (e.g. 0000248122766849 -> 248122766849)
+  /// - Removes formatting symbols (- / _)
+  static String normalizeReferenceId(String? ref) {
+    if (ref == null) return "";
+    String clean = ref.trim().toUpperCase();
+    clean = clean.replaceAll(RegExp(r'[\s\-_]'), '');
+    if (!isValidReferenceId(clean)) return "";
+    // If string has leading zeros followed by at least 6 digits/chars, strip the leading zeros
+    final noZeros = clean.replaceFirst(RegExp(r'^0+'), '');
+    if (noZeros.isNotEmpty && noZeros.length >= 6 && isValidReferenceId(noZeros)) {
+      return noZeros;
+    }
+    return clean;
+  }
+
+  /// Determines whether two reference IDs refer to the same transaction
+  static bool areReferenceIdsMatching(String? ref1, String? ref2) {
+    if (ref1 == null || ref2 == null) return false;
+    final n1 = normalizeReferenceId(ref1);
+    final n2 = normalizeReferenceId(ref2);
+    if (n1.isEmpty || n2.isEmpty) return false;
+
+    // Exact normalized match (e.g. 0000248122766849 and 248122766849 both normalize to 248122766849)
+    if (n1 == n2) return true;
+
+    // Suffix / substring match for bank padding or embedded UPI RRN (min 8 digits)
+    if (n1.length >= 8 && n2.length >= 8) {
+      if (n1.endsWith(n2) || n2.endsWith(n1)) return true;
+      if (n1.contains(n2) || n2.contains(n1)) return true;
+    }
+    return false;
+  }
+
+  /// Checks if two notes share a common transaction reference / RRN embedded in their narrations
+  static bool notesShareReferenceId(String? note1, String? note2) {
+    if (note1 == null || note2 == null || note1.isEmpty || note2.isEmpty) {
+      return false;
+    }
+    final r1 = extractReferenceId(note1);
+    final r2 = extractReferenceId(note2);
+    if (r1 != null && r2 != null && areReferenceIdsMatching(r1, r2)) return true;
+
+    final n1 = normalizeReferenceId(r1);
+    final n2 = normalizeReferenceId(r2);
+    if (n1.length >= 8 && note2.toUpperCase().contains(n1)) return true;
+    if (n2.length >= 8 && note1.toUpperCase().contains(n2)) return true;
+
+    return false;
+  }
+
   /// Extracts reference ID (UPI Ref, UTR, Cheque No, Transaction ID)
   static String? extractReferenceId(String text, {String? explicitRef}) {
     if (explicitRef != null && explicitRef.trim().isNotEmpty) {
       final clean = explicitRef.trim();
-      if (clean != "-" && clean != "NA" && clean != "null") {
-        return clean;
+      if (clean != "-" && clean != "NA" && clean != "null" && isValidReferenceId(clean)) {
+        return normalizeReferenceId(clean);
       }
     }
-    // Pattern 1: UPI/..., Ref no: ..., UTR: ..., Txn ID: ..., Chq/Ref: ...
+    // Pattern 1: Explicit Ref ID:, Ref no:, Txn ID:, UTR:, CMS:, Chq/Ref: ...
     final refPatterns = [
       RegExp(
-          r'(?:UPI[\/\-]|Ref(?:\s*no)?[:\s\/\-]+|UTR[:\s\/\-]+|Txn(?:\s*id)?[:\s\/\-]+|CMS[\/\-])([A-Za-z0-9]{6,24})',
+          r'(?:Ref(?:\s*(?:ID|no|num|number))?|Txn(?:\s*id)?|UTR|CMS|Chq(?:\s*no)?)[:\s\/\-]+([A-Za-z0-9]{6,24})',
           caseSensitive: false),
-      // Pattern 2: 12 to 18 digit transaction reference numbers (common in HDFC/SBI/ICICI/UPI)
-      RegExp(r'\b([0-9]{12,18})\b'),
-      // Pattern 3: Cheque / ref numbers like 0000185387200991
+      // Pattern 2: 12-digit standard UPI RRN (Retrieval Reference Number)
+      RegExp(r'\b([0-9]{12})\b'),
+      // Pattern 3: Cheque / ref numbers with leading zeros like 0000185387200991 or 0000104390793818
       RegExp(r'\b(0000[0-9]{8,14})\b'),
+      // Pattern 4: 12 to 18 digit transaction reference numbers
+      RegExp(r'\b([0-9]{12,18})\b'),
+      // Pattern 5: Alphanumeric UTR with bank prefix e.g. HDFCN23019284721
+      RegExp(r'\b([A-Z]{4}[0-9]{10,18})\b', caseSensitive: false),
     ];
 
     for (final reg in refPatterns) {
       final match = reg.firstMatch(text);
       if (match != null) {
-        return match.group(1);
+        final val = match.group(1);
+        if (val != null && isValidReferenceId(val)) {
+          return normalizeReferenceId(val);
+        }
       }
     }
     return null;
@@ -1300,27 +1384,35 @@ Respond ONLY with valid JSON array:
         final amountMatches = (tx.amount.abs() - entry.amount).abs() < 0.01;
         final typeMatches = (tx.income == entry.isIncome);
 
-        if (diffDays <= 2 && amountMatches && typeMatches) {
-          // If BOTH have non-empty reference IDs and they differ, they are distinct transactions
+        if (amountMatches && typeMatches) {
           final dbRef = extractReferenceId(tx.note);
           final entryRef =
               entry.referenceNo ?? extractReferenceId(entry.rawNarration);
 
+          final refsMatch = areReferenceIdsMatching(dbRef, entryRef) ||
+              notesShareReferenceId(tx.note, entry.rawNarration);
+
           if (dbRef != null && entryRef != null && dbRef.isNotEmpty && entryRef.isNotEmpty) {
-            if (dbRef != entryRef) {
+            if (!refsMatch) {
               // Different reference IDs on same day: legitimate distinct transactions!
               continue;
             }
           }
 
-          entry.duplicateState = DuplicateState.confirmedDuplicate;
-          entry.matchedSource = 'database';
-          entry.isSelected = false; // Deselect already-reconciled items
-          entry.duplicateReason =
-              "Reconciled with existing '${tx.name}' (${DateFormat('dd MMM').format(tx.dateCreated)})" +
-                  (dbRef != null ? " [Ref: $dbRef]" : "");
-          matched = true;
-          break;
+          // If reference IDs match, allow up to 4 days difference (bank value date / clearing delays)
+          // Otherwise, require within 2 calendar days
+          final maxDays = refsMatch ? 4 : 2;
+          if (diffDays <= maxDays) {
+            entry.duplicateState = DuplicateState.confirmedDuplicate;
+            entry.matchedSource = 'database';
+            entry.isSelected = false; // Deselect already-reconciled items
+            final displayRef = entryRef ?? dbRef;
+            entry.duplicateReason =
+                "Reconciled with existing '${tx.name}' (${DateFormat('dd MMM').format(tx.dateCreated)})" +
+                    (displayRef != null ? " [Ref: $displayRef]" : "");
+            matched = true;
+            break;
+          }
         }
       }
 
@@ -1333,26 +1425,33 @@ Respond ONLY with valid JSON array:
           final amountMatches = (item.amount.abs() - entry.amount).abs() < 0.01;
           final typeMatches = (item.isIncome == entry.isIncome);
 
-          if (diffDays <= 2 && amountMatches && typeMatches) {
+          if (amountMatches && typeMatches) {
             final smsRef = extractReferenceId(item.rawMessage);
             final entryRef =
                 entry.referenceNo ?? extractReferenceId(entry.rawNarration);
 
+            final refsMatch = areReferenceIdsMatching(smsRef, entryRef) ||
+                notesShareReferenceId(item.rawMessage, entry.rawNarration);
+
             if (smsRef != null && entryRef != null && smsRef.isNotEmpty && entryRef.isNotEmpty) {
-              if (smsRef != entryRef) {
+              if (!refsMatch) {
                 // Different reference IDs on same day: legitimate distinct transactions!
                 continue;
               }
             }
 
-            entry.duplicateState = DuplicateState.potentialDuplicate;
-            entry.matchedSource = 'review_inbox';
-            entry.isSelected = false;
-            entry.duplicateReason =
-                "Matches pending SMS in Review Inbox: '${item.cleanMerchant}' (${DateFormat('dd MMM').format(item.date)})" +
-                    (smsRef != null ? " [Ref: $smsRef]" : "");
-            matched = true;
-            break;
+            final maxDays = refsMatch ? 4 : 2;
+            if (diffDays <= maxDays) {
+              entry.duplicateState = DuplicateState.potentialDuplicate;
+              entry.matchedSource = 'review_inbox';
+              entry.isSelected = false;
+              final displayRef = entryRef ?? smsRef;
+              entry.duplicateReason =
+                  "Matches pending SMS in Review Inbox: '${item.cleanMerchant}' (${DateFormat('dd MMM').format(item.date)})" +
+                      (displayRef != null ? " [Ref: $displayRef]" : "");
+              matched = true;
+              break;
+            }
           }
         }
       }

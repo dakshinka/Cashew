@@ -479,18 +479,26 @@ class ReviewManager {
         final typeMatches = (t.income == reviewItem.isIncome);
         if (!typeMatches) return false;
 
+        final dbRef = StatementParser.extractReferenceId(t.note);
+        final smsRef = StatementParser.extractReferenceId(rawMessage);
+        final refsMatch = StatementParser.areReferenceIdsMatching(dbRef, smsRef) ||
+            StatementParser.notesShareReferenceId(t.note, rawMessage);
+
+        if (dbRef != null && smsRef != null && dbRef.isNotEmpty && smsRef.isNotEmpty) {
+          if (!refsMatch) return false;
+        }
+
+        // If reference IDs match, it is definitively the same transaction (allow up to 4 days for value date lag)
+        if (refsMatch && diffDays <= 4) return true;
+
+        if (diffDays > 2) return false;
+
         final tName = t.name.toLowerCase();
         final rName = reviewItem.cleanMerchant.toLowerCase();
         final nameMatches = tName == rName ||
             tName.contains(rName) ||
             rName.contains(tName) ||
             AiCategorizer.cleanMerchantName(t.name).toLowerCase() == rName;
-
-        final dbRef = StatementParser.extractReferenceId(t.note);
-        final smsRef = StatementParser.extractReferenceId(rawMessage);
-        if (dbRef != null && smsRef != null && dbRef.isNotEmpty && smsRef.isNotEmpty) {
-          if (dbRef != smsRef) return false;
-        }
 
         final noteMatches = t.note.contains(rawMessage.trim());
 
@@ -642,8 +650,6 @@ class ReviewManager {
           final txDateOnly = DateTime(
               t.dateCreated.year, t.dateCreated.month, t.dateCreated.day);
           final diffDays = txDateOnly.difference(itemDateOnly).inDays.abs();
-          if (diffDays > 2) return false;
-
           final amountMatches =
               (t.amount.abs() - item.amount.abs()).abs() < 0.01;
           if (!amountMatches) return false;
@@ -651,18 +657,25 @@ class ReviewManager {
           final typeMatches = (t.income == item.isIncome);
           if (!typeMatches) return false;
 
+          final dbRef = StatementParser.extractReferenceId(t.note);
+          final smsRef = StatementParser.extractReferenceId(item.rawMessage);
+          final refsMatch = StatementParser.areReferenceIdsMatching(dbRef, smsRef) ||
+              StatementParser.notesShareReferenceId(t.note, item.rawMessage);
+
+          if (dbRef != null && smsRef != null && dbRef.isNotEmpty && smsRef.isNotEmpty) {
+            if (!refsMatch) return false;
+          }
+
+          if (refsMatch && diffDays <= 4) return true;
+
+          if (diffDays > 2) return false;
+
           final tName = t.name.toLowerCase();
           final rName = item.cleanMerchant.toLowerCase();
           final nameMatches = tName == rName ||
               tName.contains(rName) ||
               rName.contains(tName) ||
               AiCategorizer.cleanMerchantName(t.name).toLowerCase() == rName;
-
-          final dbRef = StatementParser.extractReferenceId(t.note);
-          final smsRef = StatementParser.extractReferenceId(item.rawMessage);
-          if (dbRef != null && smsRef != null && dbRef.isNotEmpty && smsRef.isNotEmpty) {
-            if (dbRef != smsRef) return false;
-          }
 
           final noteMatches = t.note.contains(item.rawMessage.trim());
 

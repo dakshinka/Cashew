@@ -708,23 +708,33 @@ class BackupShareManager {
         // Amount must match
         if ((t1.amount.abs() - t2.amount.abs()).abs() >= 0.01) continue;
 
-        // Date check: identical calendar day or within 1 day
+        // Date check: identical calendar day or within 1 day (or up to 5 days if Ref IDs match)
         final t2DateOnly = DateTime(
             t2.dateCreated.year, t2.dateCreated.month, t2.dateCreated.day);
         final diffDays = t1DateOnly.difference(t2DateOnly).inDays.abs();
-        if (diffDays > 1) continue;
 
         // Check Reference IDs if present
         final ref1 = StatementParser.extractReferenceId(t1.note);
         final ref2 = StatementParser.extractReferenceId(t2.note);
+        final refsMatch = StatementParser.areReferenceIdsMatching(ref1, ref2) ||
+            StatementParser.notesShareReferenceId(t1.note, t2.note);
+
         if (ref1 != null &&
             ref2 != null &&
             ref1.isNotEmpty &&
             ref2.isNotEmpty) {
-          if (ref1 != ref2) {
+          if (!refsMatch) {
             // Different reference IDs on same day: separate legitimate payments!
             continue;
           }
+        }
+
+        // For transactions with matching reference IDs, allow up to 5 days difference
+        // (due to weekend/holiday bank clearing vs real-time SMS)
+        if (refsMatch) {
+          if (diffDays > 5) continue;
+        } else {
+          if (diffDays > 1) continue;
         }
 
         final name1 = t1.name.toLowerCase().trim();
@@ -735,9 +745,14 @@ class BackupShareManager {
         bool isDuplicate = false;
         String reason = "";
 
-        if (ref1 != null && ref2 != null && ref1 == ref2) {
+        if (refsMatch) {
           isDuplicate = true;
-          reason = "Matching Ref / Txn ID: '$ref1'";
+          final matchedRef = (ref1 != null && ref1.isNotEmpty)
+              ? StatementParser.normalizeReferenceId(ref1)
+              : ((ref2 != null && ref2.isNotEmpty)
+                  ? StatementParser.normalizeReferenceId(ref2)
+                  : "");
+          reason = "Matching Ref / Txn ID: '$matchedRef'";
         } else if (name1 == name2 && (diffDays == 0 || note1 == note2)) {
           isDuplicate = true;
           reason = "Identical merchant & amount on same day";
@@ -839,6 +854,15 @@ class BackupShareManager {
                       final amtStr =
                           "${orig.amount < 0 ? '-' : '+'}₹${orig.amount.abs().toStringAsFixed(2)}";
 
+                      String getSourceTag(String note) {
+                        if (note.contains("[Source: Bank Statement")) return "Bank Statement";
+                        if (note.contains("[Source: Credit Card")) return "Card Statement";
+                        if (note.contains("[Source: SMS")) return "SMS";
+                        return "Recorded";
+                      }
+                      final src1 = getSourceTag(orig.note);
+                      final src2 = getSourceTag(dup.note);
+
                       return Container(
                         margin: const EdgeInsets.symmetric(vertical: 8),
                         padding: const EdgeInsets.all(12),
@@ -929,6 +953,29 @@ class BackupShareManager {
                                               fontSize: 11,
                                               fontWeight: FontWeight.bold,
                                             ),
+                                            const Spacer(),
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(
+                                                  horizontal: 4, vertical: 1),
+                                              decoration: BoxDecoration(
+                                                color: src1 == "Bank Statement"
+                                                    ? Colors.blue.withOpacity(0.15)
+                                                    : (src1 == "SMS"
+                                                        ? Colors.purple.withOpacity(0.15)
+                                                        : Colors.grey.withOpacity(0.15)),
+                                                borderRadius: BorderRadius.circular(4),
+                                              ),
+                                              child: TextFont(
+                                                text: src1,
+                                                fontSize: 8.5,
+                                                fontWeight: FontWeight.w600,
+                                                textColor: src1 == "Bank Statement"
+                                                    ? Colors.blue.shade800
+                                                    : (src1 == "SMS"
+                                                        ? Colors.purple.shade800
+                                                        : Colors.grey.shade700),
+                                              ),
+                                            ),
                                           ],
                                         ),
                                         const SizedBox(height: 4),
@@ -998,6 +1045,29 @@ class BackupShareManager {
                                               text: "Candidate B",
                                               fontSize: 11,
                                               fontWeight: FontWeight.bold,
+                                            ),
+                                            const Spacer(),
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(
+                                                  horizontal: 4, vertical: 1),
+                                              decoration: BoxDecoration(
+                                                color: src2 == "Bank Statement"
+                                                    ? Colors.blue.withOpacity(0.15)
+                                                    : (src2 == "SMS"
+                                                        ? Colors.purple.withOpacity(0.15)
+                                                        : Colors.grey.withOpacity(0.15)),
+                                                borderRadius: BorderRadius.circular(4),
+                                              ),
+                                              child: TextFont(
+                                                text: src2,
+                                                fontSize: 8.5,
+                                                fontWeight: FontWeight.w600,
+                                                textColor: src2 == "Bank Statement"
+                                                    ? Colors.blue.shade800
+                                                    : (src2 == "SMS"
+                                                        ? Colors.purple.shade800
+                                                        : Colors.grey.shade700),
+                                              ),
                                             ),
                                           ],
                                         ),
