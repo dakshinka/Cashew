@@ -12,77 +12,13 @@ import 'package:csv/csv.dart';
 import 'package:intl/intl.dart';
 
 class StatementParser {
-  static final List<String> _dateHeaders = [
-    "date",
-    "txn date",
-    "value date",
-    "transaction date",
-    "posting date",
-    "trans date",
-  ];
-
-  static final List<String> _narrationHeaders = [
-    "narration",
-    "description",
-    "particulars",
-    "remarks",
-    "details",
-    "transaction details",
-    "payee",
-    "merchant",
-  ];
-
-  static final List<String> _debitHeaders = [
-    "debit",
-    "dr",
-    "withdrawal",
-    "debit amount",
-    "dr amount",
-    "withdrawal amount",
-    "spent",
-  ];
-
-  static final List<String> _creditHeaders = [
-    "credit",
-    "cr",
-    "deposit",
-    "credit amount",
-    "cr amount",
-    "deposit amount",
-    "received",
-  ];
-
-  static final List<String> _amountHeaders = [
-    "amount",
-    "txn amount",
-    "net amount",
-    "transaction amount",
-  ];
-
-  static final List<String> _refHeaders = [
-    "chq",
-    "ref",
-    "cheque",
-    "reference",
-    "utr",
-    "chq/ref no",
-    "ref no",
-  ];
-
-  static final List<String> _balanceHeaders = [
-    "balance",
-    "closing balance",
-    "bal",
-    "available balance",
-  ];
-
   /// Detect columns automatically from parsed rows
   static StatementColumnIndices detectColumns(List<List<dynamic>> rows) {
     final indices = StatementColumnIndices();
     if (rows.isEmpty) return indices;
 
-    // Scan the first 50 rows to find the actual table header row (accommodates bank metadata, branch, and customer details)
-    for (int r = 0; r < rows.length && r < 50; r++) {
+    // 1. Scan up to 60 rows to find the actual table header row using regex matching
+    for (int r = 0; r < rows.length && r < 60; r++) {
       final row = rows[r].map((e) => e.toString().trim().toLowerCase()).toList();
 
       int matchCount = 0;
@@ -98,33 +34,55 @@ class StatementParser {
         final colName = row[c];
         if (colName.isEmpty) continue;
 
-        if (_dateHeaders.any((h) => colName.contains(h)) && dateIdx == -1) {
+        final isDate = RegExp(
+                r'\b(date|dt|txn\s*date|trans\s*date|value\s*date|posting\s*date|post\s*date|book\s*date)\b',
+                caseSensitive: false)
+            .hasMatch(colName);
+        final isNarration = RegExp(
+                r'\b(narration|particulars|description|remarks|details|payee|merchant|desc)\b',
+                caseSensitive: false)
+            .hasMatch(colName);
+        final isDebit = RegExp(
+                r'\b(debit|dr|withdrawal|withdrawals|spent|paid\s*out|money\s*out)\b',
+                caseSensitive: false)
+            .hasMatch(colName);
+        final isCredit = RegExp(
+                r'\b(credit|cr|deposit|deposits|received|paid\s*in|money\s*in)\b',
+                caseSensitive: false)
+            .hasMatch(colName);
+        final isAmount = !isDebit &&
+            !isCredit &&
+            RegExp(r'\b(amount|amt|total)\b', caseSensitive: false)
+                .hasMatch(colName);
+        final isRef = RegExp(
+                r'\b(chq|ref|cheque|reference|utr)\b',
+                caseSensitive: false)
+            .hasMatch(colName);
+        final isBalance = RegExp(r'\b(balance|bal)\b', caseSensitive: false)
+            .hasMatch(colName);
+
+        if (isDate && dateIdx == -1) {
           dateIdx = c;
           matchCount++;
-        } else if (_narrationHeaders.any((h) => colName.contains(h)) &&
-            narrIdx == -1) {
+        } else if (isNarration && narrIdx == -1) {
           narrIdx = c;
           matchCount++;
-        } else if (_debitHeaders.any((h) => colName == h || colName.startsWith(h))) {
+        } else if (isDebit && debIdx == null) {
           debIdx = c;
           matchCount++;
-        } else if (_creditHeaders.any((h) => colName == h || colName.startsWith(h))) {
+        } else if (isCredit && credIdx == null) {
           credIdx = c;
           matchCount++;
-        } else if (_amountHeaders.any((h) => colName == h || colName.startsWith(h)) &&
-            amtIdx == null) {
+        } else if (isAmount && amtIdx == null) {
           amtIdx = c;
           matchCount++;
-        } else if (_refHeaders.any((h) => colName.contains(h)) &&
-            refIdx == null) {
+        } else if (isRef && refIdx == null) {
           refIdx = c;
-        } else if (_balanceHeaders.any((h) => colName.contains(h)) &&
-            balIdx == null) {
+        } else if (isBalance && balIdx == null) {
           balIdx = c;
         }
       }
 
-      // If at least date and narration or amount matched, consider this the header row
       if (matchCount >= 2 && (dateIdx != -1 || narrIdx != -1)) {
         indices.headerRowIndex = r;
         indices.dateCol = dateIdx;
@@ -138,13 +96,60 @@ class StatementParser {
       }
     }
 
+    // 2. Heuristic data-row scanner: If headers weren't found via text,
+    // examine the data rows directly to identify date, narration, and amount columns
+    for (int r = 0; r < rows.length && r < 40; r++) {
+      final row = rows[r];
+      if (row.length < 3) continue;
+
+      int candidateDate = -1;
+      int candidateNarr = -1;
+      int candidateAmt = -1;
+
+      for (int c = 0; c < row.length; c++) {
+        final val = row[c].toString().trim();
+        if (val.isEmpty) continue;
+
+        if (candidateDate == -1 && parseFlexibleDate(val) != null) {
+          candidateDate = c;
+        } else if (candidateAmt == -1 && parseAmount(val) > 0) {
+          candidateAmt = c;
+        } else if (candidateNarr == -1 &&
+            val.length >= 3 &&
+            double.tryParse(val) == null) {
+          candidateNarr = c;
+        }
+      }
+
+      if (candidateDate != -1 && candidateAmt != -1) {
+        indices.headerRowIndex = (r > 0) ? r - 1 : 0;
+        indices.dateCol = candidateDate;
+        indices.narrationCol = candidateNarr != -1
+            ? candidateNarr
+            : (candidateDate == 0 ? 1 : 0);
+        indices.amountCol = candidateAmt;
+        return indices;
+      }
+    }
+
     return indices;
   }
 
-  /// Parses date string with various common formats
+  /// Parses date string with various common bank formats
   static DateTime? parseFlexibleDate(String rawDate) {
-    final clean = rawDate.trim();
+    var clean = rawDate.trim();
     if (clean.isEmpty) return null;
+
+    // 1. Strip time portion if present (e.g. "01/11/2024 10:30:00" -> "01/11/2024")
+    final timeSplit = clean.split(RegExp(r'\s+'));
+    if (timeSplit.isNotEmpty && timeSplit[0].length >= 6) {
+      clean = timeSplit[0];
+    }
+
+    // 2. Normalize dots to slashes (e.g. "01.11.2024" -> "01/11/2024")
+    if (clean.contains('.')) {
+      clean = clean.replaceAll('.', '/');
+    }
 
     final formats = [
       "dd/MM/yyyy",
@@ -155,10 +160,16 @@ class StatementParser {
       "MM/dd/yyyy",
       "d/M/yyyy",
       "d-M-yyyy",
+      "d/M/yy",
+      "d-M-yy",
       "dd-MMM-yyyy",
       "dd MMM yyyy",
       "dd/MMM/yyyy",
+      "dd-MMM-yy",
+      "dd/MMM/yy",
       "yyyy/MM/dd",
+      "MMM dd, yyyy",
+      "MMMM dd, yyyy",
     ];
 
     for (final fmt in formats) {
@@ -285,11 +296,22 @@ class StatementParser {
                 }
               }
               if (htmlRows.length >= 2) {
-                return await parseRows(htmlRows,
+                final tableEntries = await parseRows(htmlRows,
                     customIndices: customIndices,
                     targetWalletPk: targetWalletPk);
+                if (tableEntries.isNotEmpty) {
+                  return tableEntries;
+                }
               }
             }
+          }
+
+          // If individual tables didn't yield transactions, run AI on the HTML text!
+          final bodyText = doc.body?.text ?? textContent;
+          if (bodyText.trim().length > 50) {
+            final aiEntries = await parseStatementWithAi(bodyText,
+                targetWalletPk: targetWalletPk);
+            if (aiEntries.isNotEmpty) return aiEntries;
           }
         } catch (htmlErr) {
           debugPrint("HTML .xls table parsing error: $htmlErr");

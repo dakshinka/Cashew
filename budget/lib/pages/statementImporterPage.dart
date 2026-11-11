@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
 import 'package:collection/collection.dart';
+import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:budget/colors.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/functions.dart';
@@ -85,6 +86,33 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
         );
       }
 
+      // Automatic AI statement extraction directly from file bytes if deterministic parsers return 0 rows
+      if (entries.isEmpty) {
+        String rawText = "";
+        if (ext == 'pdf') {
+          try {
+            final doc = PdfDocument(inputBytes: bytes);
+            rawText = PdfTextExtractor(doc).extractText();
+            doc.dispose();
+          } catch (_) {}
+        } else {
+          try {
+            rawText = utf8.decode(bytes, allowMalformed: true);
+          } catch (_) {
+            try {
+              rawText = latin1.decode(bytes);
+            } catch (_) {}
+          }
+        }
+
+        if (rawText.trim().isNotEmpty) {
+          entries = await StatementParser.parseStatementWithAi(
+            rawText,
+            targetWalletPk: _selectedWalletPk,
+          );
+        }
+      }
+
       setState(() {
         _parsedEntries = entries;
         _isProcessing = false;
@@ -93,9 +121,9 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
       if (entries.isEmpty) {
         openSnackbar(
           SnackbarMessage(
-            title: "No Transactions Found",
+            title: "No Transactions Detected",
             description:
-                "Could not extract transactions from $ext file. Try copy-pasting statement text.",
+                "Could not find transaction rows in the uploaded $ext file. Please verify this statement contains transaction entries.",
             icon: Icons.warning_amber_rounded,
           ),
         );
