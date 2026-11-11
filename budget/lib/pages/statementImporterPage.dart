@@ -36,6 +36,7 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
   List<StatementEntry> _parsedEntries = [];
   bool _isProcessing = false;
   bool _isImporting = false;
+  String? _stageMessage;
   String? _loadedFileName;
   String _filterMode = "all"; // "all", "missing", "reconciled"
 
@@ -58,6 +59,11 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
       _loadedFileName = file.name;
       final ext = file.extension?.toLowerCase() ?? '';
 
+      setState(() {
+        _isProcessing = true;
+        _stageMessage = "Loading $ext statement file...";
+      });
+
       List<int>? bytes;
       if (kIsWeb) {
         bytes = file.bytes;
@@ -65,15 +71,27 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
         bytes = await File(file.path!).readAsBytes();
       }
 
-      if (bytes == null || bytes.isEmpty) return;
-
-      if (ext == 'pdf' && StatementParser.isPdfEncrypted(bytes)) {
-        setState(() => _isProcessing = false);
-        _promptForPdfPassword(bytes);
+      if (bytes == null || bytes.isEmpty) {
+        setState(() {
+          _isProcessing = false;
+          _stageMessage = null;
+        });
         return;
       }
 
-      setState(() => _isProcessing = true);
+      if (ext == 'pdf') {
+        setState(() => _stageMessage = "Verifying PDF encryption & permissions...");
+        if (StatementParser.isPdfEncrypted(bytes)) {
+          setState(() {
+            _isProcessing = false;
+            _stageMessage = null;
+          });
+          _promptForPdfPassword(bytes);
+          return;
+        }
+      }
+
+      setState(() => _stageMessage = "Extracting transaction rows & reference IDs...");
 
       List<StatementEntry> entries = [];
       if (ext == 'xlsx' || ext == 'xls') {
@@ -88,7 +106,10 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
             targetWalletPk: _selectedWalletPk,
           );
         } on PdfPasswordException catch (_) {
-          setState(() => _isProcessing = false);
+          setState(() {
+            _isProcessing = false;
+            _stageMessage = null;
+          });
           _promptForPdfPassword(bytes);
           return;
         }
@@ -103,6 +124,7 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
 
       // Automatic AI statement extraction directly from file bytes if deterministic parsers return 0 rows
       if (entries.isEmpty) {
+        setState(() => _stageMessage = "Analyzing unformatted text with AI assistant...");
         String rawText = "";
         if (ext == 'pdf') {
           try {
@@ -131,6 +153,7 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
       setState(() {
         _parsedEntries = entries;
         _isProcessing = false;
+        _stageMessage = null;
       });
 
       if (entries.isEmpty) {
@@ -297,6 +320,11 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                             errorMessage = null;
                           });
 
+                          setState(() {
+                            _isProcessing = true;
+                            _stageMessage = "Decrypting statement & parsing transactions...";
+                          });
+
                           try {
                             List<StatementEntry> entries =
                                 await StatementParser.parsePdfBytes(
@@ -328,6 +356,7 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                             setState(() {
                               _parsedEntries = entries;
                               _isProcessing = false;
+                              _stageMessage = null;
                             });
 
                             if (entries.isEmpty) {
@@ -805,7 +834,10 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
   Future<void> _commitImport() async {
     if (_isImporting || _isProcessing) return;
     _isImporting = true;
-    setState(() => _isProcessing = true);
+    setState(() {
+      _isProcessing = true;
+      _stageMessage = "Deduplicating & importing selected transactions...";
+    });
 
     try {
       final toImport = _parsedEntries.where((e) => e.isSelected).toList();
@@ -963,12 +995,22 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
           final catPk =
               entry.suggestedCategoryPk ?? defaultCat?.categoryPk ?? "";
 
+          final refId = StatementParser.extractReferenceId(entry.rawNarration,
+              explicitRef: entry.referenceNo);
+          final method =
+              StatementParser.extractPaymentMethod(entry.rawNarration);
+
+          final note =
+              "[Source: Bank Statement (${_loadedFileName ?? 'Statement'})]\n" +
+                  (refId != null ? "Ref ID: $refId\n" : "") +
+                  "Method: $method\n" +
+                  "Narration: ${entry.rawNarration}";
+
           final tx = Transaction(
             transactionPk: entry.id,
             name: entry.cleanMerchant,
             amount: amount,
-            note: "Statement Import (${_loadedFileName ?? 'Statement'}):\n${entry.rawNarration}" +
-                (entry.referenceNo != null ? "\nRef: ${entry.referenceNo}" : ""),
+            note: note,
             categoryFk: catPk,
             walletFk: entry.destinationWalletPk ?? walletPk,
             dateCreated: entry.date,
@@ -1008,6 +1050,7 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
         setState(() {
           _isProcessing = false;
           _isImporting = false;
+          _stageMessage = null;
         });
       }
     }
@@ -1270,9 +1313,45 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
         ),
 
         if (_isProcessing)
-          const Padding(
-            padding: EdgeInsets.all(32.0),
-            child: Center(child: CircularProgressIndicator()),
+          Padding(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16.0, vertical: 20.0),
+            child: Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: Theme.of(context)
+                    .colorScheme
+                    .primaryContainer
+                    .withOpacity(0.35),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .primary
+                      .withOpacity(0.3),
+                ),
+              ),
+              child: Column(
+                children: [
+                  const CircularProgressIndicator(strokeWidth: 3),
+                  const SizedBox(height: 16),
+                  TextFont(
+                    text: _stageMessage ?? "Processing Statement...",
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 6),
+                  TextFont(
+                    text:
+                        "Analyzing document tables, extracting reference IDs, and reconciling duplicates...",
+                    fontSize: 12,
+                    textColor: getColor(context, "textLight"),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ),
+            ),
           ),
 
         // Summary Bar when entries are loaded

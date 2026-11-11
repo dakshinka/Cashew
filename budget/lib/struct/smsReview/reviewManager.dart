@@ -11,6 +11,7 @@ import 'package:budget/struct/smsReview/aiCategorizer.dart';
 import 'package:budget/struct/smsReview/llmClassifier.dart';
 import 'package:budget/struct/smsReview/smsDiagnosticTracker.dart';
 import 'package:budget/struct/backupShare/backupShareManager.dart';
+import 'package:budget/struct/statementImporter/statementParser.dart';
 
 const _uuid = Uuid();
 const String _kReviewInboxStorageKey = "cached_review_transactions_v1";
@@ -482,6 +483,12 @@ class ReviewManager {
             rName.contains(tName) ||
             AiCategorizer.cleanMerchantName(t.name).toLowerCase() == rName;
 
+        final dbRef = StatementParser.extractReferenceId(t.note);
+        final smsRef = StatementParser.extractReferenceId(rawMessage);
+        if (dbRef != null && smsRef != null && dbRef.isNotEmpty && smsRef.isNotEmpty) {
+          if (dbRef != smsRef) return false;
+        }
+
         final noteMatches = t.note.contains(rawMessage.trim());
 
         return nameMatches || noteMatches || (diffDays <= 1);
@@ -618,6 +625,12 @@ class ReviewManager {
               rName.contains(tName) ||
               AiCategorizer.cleanMerchantName(t.name).toLowerCase() == rName;
 
+          final dbRef = StatementParser.extractReferenceId(t.note);
+          final smsRef = StatementParser.extractReferenceId(item.rawMessage);
+          if (dbRef != null && smsRef != null && dbRef.isNotEmpty && smsRef.isNotEmpty) {
+            if (dbRef != smsRef) return false;
+          }
+
           final noteMatches = t.note.contains(item.rawMessage.trim());
 
           return nameMatches || noteMatches || (diffDays <= 1);
@@ -629,11 +642,18 @@ class ReviewManager {
         }
       } catch (_) {}
 
+      final refId = StatementParser.extractReferenceId(item.rawMessage);
+      final method = StatementParser.extractPaymentMethod(item.rawMessage);
+      final note = "[Source: SMS Notification]\n" +
+          (refId != null ? "Ref ID: $refId\n" : "") +
+          "Method: $method\n" +
+          "Narration: ${item.rawMessage}";
+
       final newTransaction = Transaction(
         transactionPk: _uuid.v4(),
         name: item.cleanMerchant,
         amount: finalAmount,
-        note: "Auto-logged from SMS/Notification:\n${item.rawMessage}",
+        note: note,
         categoryFk: categoryPk,
         walletFk: walletPk,
         dateCreated: item.date,

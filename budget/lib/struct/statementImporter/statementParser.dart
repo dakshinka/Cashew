@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:excel/excel.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
@@ -541,8 +542,64 @@ class StatementParser {
     return buffer.toString();
   }
 
+  /// Extracts payment method from narration/message
+  static String extractPaymentMethod(String text) {
+    final upper = text.toUpperCase();
+    if (upper.contains("UPI")) return "UPI";
+    if (upper.contains("IMPS")) return "IMPS";
+    if (upper.contains("NEFT")) return "NEFT";
+    if (upper.contains("RTGS")) return "RTGS";
+    if (upper.contains("ATM") || upper.contains("CASH WDL")) return "ATM Cash";
+    if (upper.contains("POS") || upper.contains("SWIPE")) return "Debit Card / POS";
+    if (upper.contains("BILLPAY") ||
+        upper.contains("NETBANKING") ||
+        upper.contains("IB BILLPAY")) return "Net Banking / BillPay";
+    if (upper.contains("CREDIT CARD") || upper.contains("CARD")) return "Card";
+    return "Bank Transfer";
+  }
+
+  /// Extracts reference ID (UPI Ref, UTR, Cheque No, Transaction ID)
+  static String? extractReferenceId(String text, {String? explicitRef}) {
+    if (explicitRef != null && explicitRef.trim().isNotEmpty) {
+      final clean = explicitRef.trim();
+      if (clean != "-" && clean != "NA" && clean != "null") {
+        return clean;
+      }
+    }
+    // Pattern 1: UPI/..., Ref no: ..., UTR: ..., Txn ID: ..., Chq/Ref: ...
+    final refPatterns = [
+      RegExp(
+          r'(?:UPI[\/\-]|Ref(?:\s*no)?[:\s\/\-]+|UTR[:\s\/\-]+|Txn(?:\s*id)?[:\s\/\-]+|CMS[\/\-])([A-Za-z0-9]{6,24})',
+          caseSensitive: false),
+      // Pattern 2: 12 to 18 digit transaction reference numbers (common in HDFC/SBI/ICICI/UPI)
+      RegExp(r'\b([0-9]{12,18})\b'),
+      // Pattern 3: Cheque / ref numbers like 0000185387200991
+      RegExp(r'\b(0000[0-9]{8,14})\b'),
+    ];
+
+    for (final reg in refPatterns) {
+      final match = reg.firstMatch(text);
+      if (match != null) {
+        return match.group(1);
+      }
+    }
+    return null;
+  }
+
   /// Checks whether a PDF document requires a password to open
   static bool isPdfEncrypted(List<int> bytes) {
+    if (bytes.length < 50) return false;
+    try {
+      // Fast raw byte signature check for PDF encryption dictionary
+      final headLen = math.min(bytes.length, 32768);
+      final tailLen = math.min(bytes.length, 8192);
+      final head = latin1.decode(bytes.sublist(0, headLen));
+      final tail = latin1.decode(bytes.sublist(bytes.length - tailLen));
+      if (head.contains('/Encrypt') || tail.contains('/Encrypt')) {
+        return true;
+      }
+    } catch (_) {}
+
     try {
       final doc = PdfDocument(inputBytes: bytes);
       doc.dispose();
@@ -602,65 +659,156 @@ class StatementParser {
     return [];
   }
 
-  /// Deterministic line parser for structured bank & credit card statement text
+  /// Robust table and line parser for structured bank & credit card statement text
   static Future<List<StatementEntry>> parsePdfTextLines(
     String fullText, {
     String? targetWalletPk,
   }) async {
-    final lines = fullText
-        .split('\n')
-        .map((l) => l.trim())
-        .where((l) => l.isNotEmpty)
-        .toList();
+    final rawLines = fullText.split('\n');
     final List<StatementEntry> entries = [];
 
-    // Line matching pattern for common bank/credit card statement rows:
-    // e.g. "04/11/2026 SWIGGY BANGALORE 450.00" or "04-Nov-2026 STARBUCKS 320.00 Cr"
-    final lineRegex = RegExp(
-      r'^\s*([0-3]?[0-9][\/\-.][0-1]?[0-9][\/\-.][0-9]{2,4}|[0-3]?[0-9]\s+[A-Za-z]{3}\s+[0-9]{2,4})\s+(.+?)\s+([0-9]{1,3}(?:[,\s][0-9]{2,3})*(?:\.[0-9]{1,2})?)\s*(Cr|Dr|Credit|Debit)?\s*$',
+    // Date pattern matching beginning of transaction rows
+    final rowDateRegex = RegExp(
+      r'^\s*([0-3]?[0-9][\/\-.][0-1]?[0-9][\/\-.][0-9]{2,4}|[0-3]?[0-9]\s+[A-Za-z]{3}\s+[0-9]{2,4}|[0-3]?[0-9]-[A-Za-z]{3}-[0-9]{2,4})',
       caseSensitive: false,
     );
 
-    for (final line in lines) {
-      final m = lineRegex.firstMatch(line);
-      if (m != null) {
-        final dateStr = m.group(1)!;
-        final narr = m.group(2)!.trim();
-        final amtStr = m.group(3)!;
-        final typeIndicator = m.group(4)?.toLowerCase();
+    // Number extractor (amounts with optional decimals, commas, and Cr/Dr indicators)
+    final amountPattern = RegExp(
+      r'([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2}))(?:\s*(Cr|Dr|Credit|Debit))?',
+      caseSensitive: false,
+    );
 
-        final date = parseFlexibleDate(dateStr);
-        final amt = parseAmount(amtStr);
-        if (date == null || amt <= 0) continue;
+    for (int lineIdx = 0; lineIdx < rawLines.length; lineIdx++) {
+      final line = rawLines[lineIdx].trim();
+      if (line.isEmpty) continue;
 
-        // Skip non-transaction summary headers
-        final lowerNarr = narr.toLowerCase();
-        if (lowerNarr.contains("balance") ||
-            lowerNarr.contains("opening") ||
-            lowerNarr.contains("closing") ||
-            lowerNarr.contains("credit limit") ||
-            lowerNarr.contains("total amount due")) {
-          continue;
-        }
-
-        final isIncome = typeIndicator == "cr" || typeIndicator == "credit";
-        final cleanMerchant = AiCategorizer.cleanMerchantName(narr);
-        final aiSuggestion = await AiCategorizer.suggestCategory(cleanMerchant,
-            isIncome: isIncome);
-
-        entries.add(
-          StatementEntry(
-            date: date,
-            rawNarration: narr,
-            cleanMerchant: cleanMerchant,
-            amount: amt,
-            isIncome: isIncome,
-            suggestedCategoryName: aiSuggestion.categoryName,
-            suggestedCategoryPk: aiSuggestion.categoryPk,
-            confidence: aiSuggestion.confidence,
-          ),
-        );
+      // Skip common non-transaction headers and summary lines
+      final lower = line.toLowerCase();
+      if (lower.contains("statement of accounts") ||
+          lower.contains("account branch") ||
+          lower.contains("rtgs/neft ifsc") ||
+          lower.contains("od limit") ||
+          lower.contains("opening balance") ||
+          lower.contains("closing balance") ||
+          lower.contains("total amount due") ||
+          lower.contains("credit limit") ||
+          lower.contains("available credit") ||
+          line.startsWith("******") ||
+          line.startsWith("------")) {
+        continue;
       }
+
+      final dateMatch = rowDateRegex.firstMatch(line);
+      if (dateMatch == null) {
+        // Multi-line continuation: If previous entry exists and this line looks like narrative details, append
+        if (entries.isNotEmpty &&
+            !line.contains(RegExp(r'^\s*[0-9]+(?:\.[0-9]{2})?$'))) {
+          final prev = entries.last;
+          if (prev.rawNarration.length < 300) {
+            prev.rawNarration += " " + line;
+          }
+        }
+        continue;
+      }
+
+      final dateStr = dateMatch.group(1)!;
+      final date = parseFlexibleDate(dateStr);
+      if (date == null) continue;
+
+      // Remainder of line after the primary transaction date
+      String remainder = line.substring(dateMatch.end).trim();
+
+      // Find all amount candidates
+      final allAmountMatches = amountPattern.allMatches(remainder).toList();
+      if (allAmountMatches.isEmpty) continue;
+
+      double? txnAmount;
+      double? balance;
+      bool isIncome = false;
+      String? explicitRef;
+
+      // In Indian bank statements (Date | Narration | Chq/Ref | Value Date | Withdrawal | Deposit | Closing Balance):
+      // The LAST valid number is Closing Balance.
+      // The preceding number is the Transaction Amount.
+      if (allAmountMatches.length >= 2) {
+        final lastMatch = allAmountMatches.last;
+        final lastVal = parseAmount(lastMatch.group(1)!);
+        final secondLastMatch = allAmountMatches[allAmountMatches.length - 2];
+        final secondLastVal = parseAmount(secondLastMatch.group(1)!);
+
+        if (secondLastVal > 0) {
+          txnAmount = secondLastVal;
+          balance = lastVal;
+
+          final indicator = (secondLastMatch.group(2) ?? lastMatch.group(2))
+              ?.toLowerCase();
+          if (indicator == "cr" || indicator == "credit") {
+            isIncome = true;
+          } else if (indicator == "dr" || indicator == "debit") {
+            isIncome = false;
+          } else {
+            if (lower.contains("deposit") ||
+                lower.contains("cr-") ||
+                lower.contains("credited") ||
+                lower.contains("salary") ||
+                lower.contains("interest")) {
+              isIncome = true;
+            } else {
+              isIncome = false;
+            }
+          }
+        }
+      } else if (allAmountMatches.length == 1) {
+        final m = allAmountMatches.first;
+        final val = parseAmount(m.group(1)!);
+        if (val > 0) {
+          txnAmount = val;
+          final indicator = m.group(2)?.toLowerCase();
+          isIncome = indicator == "cr" || indicator == "credit";
+        }
+      }
+
+      if (txnAmount == null || txnAmount <= 0) continue;
+
+      // Extract Reference number from line
+      explicitRef = extractReferenceId(remainder);
+
+      // Extract Narration: everything before the first amount match
+      final firstAmtStart = allAmountMatches.first.start;
+      String narr =
+          remainder.substring(0, math.min(remainder.length, firstAmtStart)).trim();
+      if (narr.isEmpty) {
+        narr = remainder;
+      }
+
+      narr = narr.replaceAll(RegExp(r'\s+'), ' ').trim();
+      if (narr.isEmpty) narr = "Bank Transaction";
+
+      final isCash = isCashWithdrawalNarration(narr);
+      final cleanMerchant = isCash
+          ? "ATM Cash Withdrawal"
+          : AiCategorizer.cleanMerchantName(narr);
+      final aiSuggestion = await AiCategorizer.suggestCategory(cleanMerchant,
+          isIncome: isIncome);
+
+      entries.add(
+        StatementEntry(
+          date: date,
+          rawNarration: narr,
+          cleanMerchant: cleanMerchant,
+          amount: txnAmount,
+          isIncome: isIncome,
+          referenceNo: explicitRef,
+          balance: balance,
+          suggestedCategoryName:
+              isCash ? "Cash & ATM" : aiSuggestion.categoryName,
+          suggestedCategoryPk: aiSuggestion.categoryPk,
+          confidence: isCash ? 0.99 : aiSuggestion.confidence,
+          isCashWithdrawal: isCash,
+          isTransferToCash: isCash,
+        ),
+      );
     }
 
     if (targetWalletPk != null && targetWalletPk.isNotEmpty) {
@@ -963,11 +1111,24 @@ Respond ONLY with valid JSON array:
         final typeMatches = (tx.income == entry.isIncome);
 
         if (diffDays <= 2 && amountMatches && typeMatches) {
+          // If BOTH have non-empty reference IDs and they differ, they are distinct transactions
+          final dbRef = extractReferenceId(tx.note);
+          final entryRef =
+              entry.referenceNo ?? extractReferenceId(entry.rawNarration);
+
+          if (dbRef != null && entryRef != null && dbRef.isNotEmpty && entryRef.isNotEmpty) {
+            if (dbRef != entryRef) {
+              // Different reference IDs on same day: legitimate distinct transactions!
+              continue;
+            }
+          }
+
           entry.duplicateState = DuplicateState.confirmedDuplicate;
           entry.matchedSource = 'database';
           entry.isSelected = false; // Deselect already-reconciled items
           entry.duplicateReason =
-              "Reconciled with existing '${tx.name}' (${DateFormat('dd MMM').format(tx.dateCreated)})";
+              "Reconciled with existing '${tx.name}' (${DateFormat('dd MMM').format(tx.dateCreated)})" +
+                  (dbRef != null ? " [Ref: $dbRef]" : "");
           matched = true;
           break;
         }
@@ -983,11 +1144,23 @@ Respond ONLY with valid JSON array:
           final typeMatches = (item.isIncome == entry.isIncome);
 
           if (diffDays <= 2 && amountMatches && typeMatches) {
+            final smsRef = extractReferenceId(item.rawMessage);
+            final entryRef =
+                entry.referenceNo ?? extractReferenceId(entry.rawNarration);
+
+            if (smsRef != null && entryRef != null && smsRef.isNotEmpty && entryRef.isNotEmpty) {
+              if (smsRef != entryRef) {
+                // Different reference IDs on same day: legitimate distinct transactions!
+                continue;
+              }
+            }
+
             entry.duplicateState = DuplicateState.potentialDuplicate;
             entry.matchedSource = 'review_inbox';
             entry.isSelected = false;
             entry.duplicateReason =
-                "Matches pending SMS in Review Inbox: '${item.cleanMerchant}' (${DateFormat('dd MMM').format(item.date)})";
+                "Matches pending SMS in Review Inbox: '${item.cleanMerchant}' (${DateFormat('dd MMM').format(item.date)})" +
+                    (smsRef != null ? " [Ref: $smsRef]" : "");
             matched = true;
             break;
           }

@@ -14,7 +14,9 @@ import 'package:budget/functions.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/localSync/localSyncEngine.dart';
 import 'package:budget/struct/settings.dart';
+import 'package:budget/struct/statementImporter/statementParser.dart';
 import 'package:budget/widgets/accountAndBackup.dart';
+import 'package:budget/widgets/button.dart';
 import 'package:budget/widgets/globalSnackbar.dart';
 import 'package:budget/widgets/navigationFramework.dart';
 import 'package:budget/widgets/openBottomSheet.dart';
@@ -650,7 +652,7 @@ class BackupShareManager {
   }
 
   /// Scans the database for duplicate transactions, presents the findings to the user,
-  /// and safely deletes duplicate copies while preserving the earliest original entry.
+  /// and allows side-by-side review before safely deleting duplicate copies.
   static Future<void> findAndRemoveDuplicatesWithConfirmation(
     BuildContext context, {
     String? targetWalletPk,
@@ -686,7 +688,7 @@ class BackupShareManager {
     txns.sort((a, b) => a.dateCreated.compareTo(b.dateCreated));
 
     // 2. Identify duplicate groups
-    final List<String> duplicatePksToDelete = [];
+    final List<TransactionDuplicateReviewPair> duplicatePairs = [];
     final Set<String> processedPks = {};
 
     for (int i = 0; i < txns.length; i++) {
@@ -712,33 +714,58 @@ class BackupShareManager {
         final diffDays = t1DateOnly.difference(t2DateOnly).inDays.abs();
         if (diffDays > 1) continue;
 
+        // Check Reference IDs if present
+        final ref1 = StatementParser.extractReferenceId(t1.note);
+        final ref2 = StatementParser.extractReferenceId(t2.note);
+        if (ref1 != null &&
+            ref2 != null &&
+            ref1.isNotEmpty &&
+            ref2.isNotEmpty) {
+          if (ref1 != ref2) {
+            // Different reference IDs on same day: separate legitimate payments!
+            continue;
+          }
+        }
+
         final name1 = t1.name.toLowerCase().trim();
         final name2 = t2.name.toLowerCase().trim();
         final note1 = t1.note.toLowerCase().trim();
         final note2 = t2.note.toLowerCase().trim();
 
         bool isDuplicate = false;
+        String reason = "";
 
-        // Exact match on name or note
-        if (name1 == name2 && (diffDays == 0 || note1 == note2)) {
+        if (ref1 != null && ref2 != null && ref1 == ref2) {
           isDuplicate = true;
+          reason = "Matching Ref / Txn ID: '$ref1'";
+        } else if (name1 == name2 && (diffDays == 0 || note1 == note2)) {
+          isDuplicate = true;
+          reason = "Identical merchant & amount on same day";
         } else if (name1.contains(name2) || name2.contains(name1)) {
           isDuplicate = true;
+          reason = "Merchant similarity with matching amount & date";
         } else if (note1.isNotEmpty &&
             note2.isNotEmpty &&
             (note1 == note2 || note1.contains(note2) || note2.contains(note1))) {
           isDuplicate = true;
+          reason = "Matching narration notes & amount";
         }
 
         if (isDuplicate) {
-          // Keep t1 as the original, mark t2 for deletion
           processedPks.add(t2.transactionPk);
-          duplicatePksToDelete.add(t2.transactionPk);
+          duplicatePairs.add(
+            TransactionDuplicateReviewPair(
+              original: t1,
+              duplicate: t2,
+              reason: reason,
+              userChoice: 'keepOriginal',
+            ),
+          );
         }
       }
     }
 
-    if (duplicatePksToDelete.isEmpty) {
+    if (duplicatePairs.isEmpty) {
       if (!context.mounted) return;
       openSnackbar(
         SnackbarMessage(
@@ -752,45 +779,405 @@ class BackupShareManager {
 
     if (!context.mounted) return;
 
-    final confirm = await openPopup(
+    // 3. Open Interactive Side-by-Side Review Bottom Sheet
+    await openBottomSheet(
       context,
-      icon: Icons.find_replace_rounded,
-      title: "Remove ${duplicatePksToDelete.length} Duplicates?",
-      description:
-          "Found ${duplicatePksToDelete.length} duplicate transactions $accountDesc.\n\nCashew will keep the earliest original entry for each transaction and delete only the duplicate copies.\n\nProceed to remove duplicates?",
-      onCancelLabel: "Cancel",
-      onSubmitLabel: "Delete Duplicates",
-      onSubmit: () => popRoute(context, true),
-      onCancel: () => popRoute(context, false),
+      StatefulBuilder(
+        builder: (sheetContext, setSheetState) {
+          return Container(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(sheetContext).size.height * 0.85,
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.find_replace_rounded,
+                      color: Theme.of(sheetContext).colorScheme.primary,
+                      size: 26,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          TextFont(
+                            text: "Review Duplicates (${duplicatePairs.length})",
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          TextFont(
+                            text:
+                                "Compare suspected duplicates side-by-side before deleting.",
+                            fontSize: 12,
+                            textColor: getColor(sheetContext, "textLight"),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                const Divider(height: 1),
+                const SizedBox(height: 8),
+
+                // List of duplicate pairs
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: duplicatePairs.length,
+                    itemBuilder: (ctx, idx) {
+                      final pair = duplicatePairs[idx];
+                      final orig = pair.original;
+                      final dup = pair.duplicate;
+
+                      final ref1 = StatementParser.extractReferenceId(orig.note);
+                      final ref2 = StatementParser.extractReferenceId(dup.note);
+                      final amtStr =
+                          "${orig.amount < 0 ? '-' : '+'}₹${orig.amount.abs().toStringAsFixed(2)}";
+
+                      return Container(
+                        margin: const EdgeInsets.symmetric(vertical: 8),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: getColor(sheetContext, "canvasContainer"),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: getColor(sheetContext, "dividerColor")
+                                .withOpacity(0.35),
+                          ),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Header: Amount & Flag Reason
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                TextFont(
+                                  text: amtStr,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  textColor: orig.income
+                                      ? Colors.green.shade700
+                                      : Theme.of(sheetContext)
+                                          .colorScheme
+                                          .onSurface,
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: Colors.amber.withOpacity(0.18),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: TextFont(
+                                    text: pair.reason,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w600,
+                                    textColor: Colors.amber.shade900,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+
+                            // Side-by-Side Candidates Comparison
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Candidate A (Original)
+                                Expanded(
+                                  child: Container(
+                                    padding: const EdgeInsets.all(8),
+                                    decoration: BoxDecoration(
+                                      color: pair.userChoice == 'keepOriginal'
+                                          ? Colors.green.withOpacity(0.08)
+                                          : (pair.userChoice == 'keepBoth'
+                                              ? Colors.blue.withOpacity(0.05)
+                                              : Colors.red.withOpacity(0.05)),
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(
+                                        color: pair.userChoice == 'keepOriginal'
+                                            ? Colors.green.shade400
+                                            : Colors.transparent,
+                                        width: 1.5,
+                                      ),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Icon(
+                                              pair.userChoice == 'keepOriginal'
+                                                  ? Icons.check_circle_rounded
+                                                  : Icons.radio_button_unchecked,
+                                              size: 14,
+                                              color: pair.userChoice ==
+                                                      'keepOriginal'
+                                                  ? Colors.green.shade700
+                                                  : Colors.grey,
+                                            ),
+                                            const SizedBox(width: 4),
+                                            TextFont(
+                                              text: "Candidate A",
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 4),
+                                        TextFont(
+                                          text: orig.name,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                          maxLines: 1,
+                                        ),
+                                        TextFont(
+                                          text: DateFormat("dd MMM, hh:mm a")
+                                              .format(orig.dateCreated),
+                                          fontSize: 10,
+                                          textColor: getColor(
+                                              sheetContext, "textLight"),
+                                        ),
+                                        if (ref1 != null) ...[
+                                          const SizedBox(height: 2),
+                                          TextFont(
+                                            text: "Ref: $ref1",
+                                            fontSize: 10,
+                                            textColor: Colors.blue.shade800,
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+
+                                // Candidate B (Duplicate)
+                                Expanded(
+                                  child: Container(
+                                    padding: const EdgeInsets.all(8),
+                                    decoration: BoxDecoration(
+                                      color: pair.userChoice == 'keepDuplicate'
+                                          ? Colors.green.withOpacity(0.08)
+                                          : (pair.userChoice == 'keepBoth'
+                                              ? Colors.blue.withOpacity(0.05)
+                                              : Colors.red.withOpacity(0.05)),
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(
+                                        color: pair.userChoice == 'keepDuplicate'
+                                            ? Colors.green.shade400
+                                            : Colors.transparent,
+                                        width: 1.5,
+                                      ),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Icon(
+                                              pair.userChoice == 'keepDuplicate'
+                                                  ? Icons.check_circle_rounded
+                                                  : Icons.radio_button_unchecked,
+                                              size: 14,
+                                              color: pair.userChoice ==
+                                                      'keepDuplicate'
+                                                  ? Colors.green.shade700
+                                                  : Colors.grey,
+                                            ),
+                                            const SizedBox(width: 4),
+                                            TextFont(
+                                              text: "Candidate B",
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 4),
+                                        TextFont(
+                                          text: dup.name,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                          maxLines: 1,
+                                        ),
+                                        TextFont(
+                                          text: DateFormat("dd MMM, hh:mm a")
+                                              .format(dup.dateCreated),
+                                          fontSize: 10,
+                                          textColor: getColor(
+                                              sheetContext, "textLight"),
+                                        ),
+                                        if (ref2 != null) ...[
+                                          const SizedBox(height: 2),
+                                          TextFont(
+                                            text: "Ref: $ref2",
+                                            fontSize: 10,
+                                            textColor: Colors.blue.shade800,
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+
+                            // Resolution Choice Pills
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: ChoiceChip(
+                                    label: const TextFont(
+                                        text: "Keep A", fontSize: 11),
+                                    selected: pair.userChoice == 'keepOriginal',
+                                    onSelected: (_) {
+                                      setSheetState(() {
+                                        pair.userChoice = 'keepOriginal';
+                                      });
+                                    },
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: ChoiceChip(
+                                    label: const TextFont(
+                                        text: "Keep B", fontSize: 11),
+                                    selected: pair.userChoice == 'keepDuplicate',
+                                    onSelected: (_) {
+                                      setSheetState(() {
+                                        pair.userChoice = 'keepDuplicate';
+                                      });
+                                    },
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                Expanded(
+                                  child: ChoiceChip(
+                                    label: const TextFont(
+                                        text: "Keep Both", fontSize: 11),
+                                    selected: pair.userChoice == 'keepBoth',
+                                    onSelected: (_) {
+                                      setSheetState(() {
+                                        pair.userChoice = 'keepBoth';
+                                      });
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                // Confirm CTA Button
+                Row(
+                  children: [
+                    Expanded(
+                      child: Button(
+                        label: "Cancel",
+                        color: getColor(sheetContext, "canvasContainer"),
+                        textColor: getColor(sheetContext, "black"),
+                        onTap: () => Navigator.of(sheetContext).pop(),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      flex: 2,
+                      child: Button(
+                        label: "Apply Resolutions",
+                        icon: Icons.done_all_rounded,
+                        color: Theme.of(sheetContext).colorScheme.primary,
+                        textColor:
+                            Theme.of(sheetContext).colorScheme.onPrimary,
+                        onTap: () async {
+                          Navigator.of(sheetContext).pop();
+
+                          final List<String> toDelete = [];
+                          for (final p in duplicatePairs) {
+                            if (p.userChoice == 'keepOriginal') {
+                              toDelete.add(p.duplicate.transactionPk);
+                            } else if (p.userChoice == 'keepDuplicate') {
+                              toDelete.add(p.original.transactionPk);
+                            }
+                            // 'keepBoth': do not delete either
+                          }
+
+                          if (toDelete.isEmpty) {
+                            openSnackbar(
+                              SnackbarMessage(
+                                title: "No Changes Applied",
+                                description:
+                                    "All duplicate pairs marked to keep both.",
+                                icon: Icons.info_outline,
+                              ),
+                            );
+                            return;
+                          }
+
+                          try {
+                            final deleted = await (database.delete(
+                                    database.transactions)
+                                  ..where((t) => t.transactionPk.isIn(toDelete)))
+                                .go();
+
+                            if (!context.mounted) return;
+                            openSnackbar(
+                              SnackbarMessage(
+                                title: "Duplicates Resolved",
+                                description:
+                                    "Removed $deleted duplicate transactions.",
+                                icon: Icons.check_circle_outline_rounded,
+                              ),
+                            );
+
+                            homePageStateKey.currentState?.refreshState();
+                          } catch (e) {
+                            if (!context.mounted) return;
+                            openSnackbar(
+                              SnackbarMessage(
+                                title: "Error Resolving Duplicates",
+                                description: e.toString(),
+                                icon: Icons.error_outline,
+                              ),
+                            );
+                          }
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          );
+        },
+      ),
     );
-
-    if (confirm != true) return;
-
-    try {
-      final deleted = await (database.delete(database.transactions)
-            ..where((t) => t.transactionPk.isIn(duplicatePksToDelete)))
-          .go();
-
-      if (!context.mounted) return;
-      openSnackbar(
-        SnackbarMessage(
-          title: "Duplicates Removed",
-          description: "Successfully deleted $deleted duplicate transactions.",
-          icon: Icons.check_circle_outline_rounded,
-        ),
-      );
-
-      // Refresh home and navigation state
-      homePageStateKey.currentState?.refreshState();
-    } catch (e) {
-      if (!context.mounted) return;
-      openSnackbar(
-        SnackbarMessage(
-          title: "Error Deleting Duplicates",
-          description: e.toString(),
-          icon: Icons.error_outline,
-        ),
-      );
-    }
   }
+}
+
+class TransactionDuplicateReviewPair {
+  final Transaction original;
+  final Transaction duplicate;
+  final String reason;
+  String userChoice;
+
+  TransactionDuplicateReviewPair({
+    required this.original,
+    required this.duplicate,
+    required this.reason,
+    this.userChoice = 'keepOriginal',
+  });
 }
