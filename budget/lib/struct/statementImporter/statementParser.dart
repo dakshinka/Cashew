@@ -8,8 +8,19 @@ import 'package:budget/struct/smsReview/aiCategorizer.dart';
 import 'package:budget/struct/smsReview/reviewManager.dart';
 import 'package:budget/struct/smsReview/llmClassifier.dart';
 import 'package:budget/struct/statementImporter/statementModels.dart';
+import 'package:budget/struct/statementImporter/biff8Parser.dart';
 import 'package:csv/csv.dart';
 import 'package:intl/intl.dart';
+
+class PdfPasswordException implements Exception {
+  final String message;
+  final bool isIncorrect;
+
+  PdfPasswordException(this.message, {this.isIncorrect = false});
+
+  @override
+  String toString() => message;
+}
 
 class StatementParser {
   /// Detect columns automatically from parsed rows
@@ -235,13 +246,27 @@ class StatementParser {
   }
 
   /// Parses Excel (.xlsx / .xls) spreadsheet bytes, supporting OpenXML (.xlsx),
-  /// HTML table statements (.xls), XML Spreadsheet 2003, and binary BIFF8 statements.
+  /// native binary BIFF8 / OLE2 (.xls), HTML table statements (.xls), and XML Spreadsheet 2003.
   static Future<List<StatementEntry>> parseExcelBytes(
     List<int> bytes, {
     StatementColumnIndices? customIndices,
     String? targetWalletPk,
   }) async {
-    // 1. Try standard OpenXML .xlsx via pure-Dart Excel library
+    // 1. Try native binary BIFF8 / OLE2 (.xls) parser (HDFC, SBI, ICICI, Axis statements)
+    if (Biff8Parser.isOle2(bytes)) {
+      try {
+        final biffRows = Biff8Parser.parseRows(bytes);
+        if (biffRows.isNotEmpty) {
+          final entries = await parseRows(biffRows,
+              customIndices: customIndices, targetWalletPk: targetWalletPk);
+          if (entries.isNotEmpty) return entries;
+        }
+      } catch (biffErr) {
+        debugPrint("Biff8 direct parse error: $biffErr");
+      }
+    }
+
+    // 2. Try standard OpenXML .xlsx via pure-Dart Excel library
     try {
       final excel = Excel.decodeBytes(bytes);
       List<List<dynamic>> rows = [];
@@ -263,7 +288,7 @@ class StatementParser {
       debugPrint("OpenXML decode skipped, trying .xls HTML/XML/binary parser: $e");
     }
 
-    // 2. Most bank .xls exports (e.g. SBI, HDFC, ICICI, Axis) are HTML tables or XML Spreadsheets
+    // 3. Most bank .xls exports (e.g. SBI, HDFC, ICICI, Axis) are HTML tables or XML Spreadsheets
     String textContent = "";
     try {
       textContent = utf8.decode(bytes);
@@ -274,7 +299,7 @@ class StatementParser {
     }
 
     if (textContent.isNotEmpty) {
-      // 2a. HTML Table saved with .xls extension
+      // 3a. HTML Table saved with .xls extension
       if (textContent.contains("<table") ||
           textContent.contains("<TABLE") ||
           textContent.contains("<html") ||
@@ -318,7 +343,7 @@ class StatementParser {
         }
       }
 
-      // 2b. XML Spreadsheet 2003 (<Workbook ... <Row><Cell><Data>...)
+      // 3b. XML Spreadsheet 2003 (<Workbook ... <Row><Cell><Data>...)
       if (textContent.contains("<Row") || textContent.contains("<row")) {
         try {
           final rowMatches = RegExp(r'<Row[^>]*>(.*?)</Row>',
@@ -353,7 +378,7 @@ class StatementParser {
         }
       }
 
-      // 2c. Delimited text (CSV / TSV) saved with .xls extension
+      // 3c. Delimited text (CSV / TSV) saved with .xls extension
       if (textContent.contains(",") || textContent.contains("\t")) {
         try {
           final csvEntries = await parseCsv(textContent,
@@ -363,7 +388,7 @@ class StatementParser {
       }
     }
 
-    // 3. Binary OLE2 / BIFF8 (.xls) file fallback
+    // 4. Binary OLE2 / BIFF8 (.xls) file fallback
     try {
       final binaryText = _extractTextFromBinaryXls(bytes);
       if (binaryText.isNotEmpty) {
@@ -380,17 +405,46 @@ class StatementParser {
     return [];
   }
 
-  /// Extracts readable ASCII / Unicode text strings from binary OLE2 / BIFF8 (.xls) files
+  /// Extracts readable UTF-16LE and ASCII text strings from binary OLE2 / BIFF8 (.xls) files
   static String _extractTextFromBinaryXls(List<int> bytes) {
     final buffer = StringBuffer();
+    final len = bytes.length;
+
+    // 1. Scan for UTF-16LE printable strings (common in BIFF8 SST records)
+    for (int i = 0; i < len - 5; i += 2) {
+      int j = i;
+      while (j + 1 < len &&
+          bytes[j] >= 32 &&
+          bytes[j] <= 126 &&
+          bytes[j + 1] == 0) {
+        j += 2;
+      }
+      final strLen = (j - i) ~/ 2;
+      if (strLen >= 3) {
+        final chars = <int>[];
+        for (int k = i; k < j; k += 2) {
+          chars.add(bytes[k]);
+        }
+        final str = String.fromCharCodes(chars).trim();
+        if (str.isNotEmpty &&
+            !str.startsWith("Root Entry") &&
+            !str.startsWith("Workbook") &&
+            !str.startsWith("Current User")) {
+          buffer.writeln(str);
+        }
+        i = j;
+      }
+    }
+
+    // 2. Scan for 1-byte ASCII strings
     int i = 0;
-    while (i < bytes.length) {
+    while (i < len) {
       int start = i;
-      while (i < bytes.length && bytes[i] >= 32 && bytes[i] <= 126) {
+      while (i < len && bytes[i] >= 32 && bytes[i] <= 126) {
         i++;
       }
-      final len = i - start;
-      if (len >= 3) {
+      final sLen = i - start;
+      if (sLen >= 3) {
         final str = String.fromCharCodes(bytes.sublist(start, i)).trim();
         if (str.isNotEmpty &&
             !str.startsWith("Root Entry") &&
@@ -404,14 +458,30 @@ class StatementParser {
     return buffer.toString();
   }
 
-  /// Parses digital PDF statement bytes (bank and credit card statements)
+  /// Checks whether a PDF document requires a password to open
+  static bool isPdfEncrypted(List<int> bytes) {
+    try {
+      final doc = PdfDocument(inputBytes: bytes);
+      doc.dispose();
+      return false;
+    } catch (e) {
+      final errStr = e.toString().toLowerCase();
+      return errStr.contains('encrypted') ||
+          errStr.contains('password') ||
+          errStr.contains('cannot open an encrypted document');
+    }
+  }
+
+  /// Parses digital PDF statement bytes (bank and credit card statements),
+  /// supporting password-protected bank statements.
   static Future<List<StatementEntry>> parsePdfBytes(
     List<int> bytes, {
     StatementColumnIndices? customIndices,
     String? targetWalletPk,
+    String? password,
   }) async {
     try {
-      final document = PdfDocument(inputBytes: bytes);
+      final document = PdfDocument(inputBytes: bytes, password: password);
       final extractor = PdfTextExtractor(document);
       final fullText = extractor.extractText();
       document.dispose();
@@ -434,6 +504,17 @@ class StatementParser {
       }
     } catch (e) {
       debugPrint("Error parsing PDF statement: $e");
+      final errStr = e.toString().toLowerCase();
+      if (errStr.contains('encrypted') ||
+          errStr.contains('password') ||
+          errStr.contains('cannot open an encrypted document')) {
+        throw PdfPasswordException(
+          password == null || password.isEmpty
+              ? "This PDF statement is password protected."
+              : "Incorrect password. Please verify and try again.",
+          isIncorrect: password != null && password.isNotEmpty,
+        );
+      }
     }
     return [];
   }

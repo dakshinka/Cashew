@@ -64,6 +64,12 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
 
       if (bytes == null || bytes.isEmpty) return;
 
+      if (ext == 'pdf' && StatementParser.isPdfEncrypted(bytes)) {
+        setState(() => _isProcessing = false);
+        _promptForPdfPassword(bytes);
+        return;
+      }
+
       setState(() => _isProcessing = true);
 
       List<StatementEntry> entries = [];
@@ -73,10 +79,16 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
           targetWalletPk: _selectedWalletPk,
         );
       } else if (ext == 'pdf') {
-        entries = await StatementParser.parsePdfBytes(
-          bytes,
-          targetWalletPk: _selectedWalletPk,
-        );
+        try {
+          entries = await StatementParser.parsePdfBytes(
+            bytes,
+            targetWalletPk: _selectedWalletPk,
+          );
+        } on PdfPasswordException catch (_) {
+          setState(() => _isProcessing = false);
+          _promptForPdfPassword(bytes);
+          return;
+        }
       } else {
         // CSV / TSV / TXT
         final content = utf8.decode(bytes, allowMalformed: true);
@@ -174,6 +186,188 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
         ),
       );
     }
+  }
+
+  Future<void> _promptForPdfPassword(List<int> bytes) async {
+    final passwordController = TextEditingController();
+    bool obscurePassword = true;
+    String? errorMessage;
+    bool isDecrypting = false;
+
+    await openBottomSheet(
+      context,
+      StatefulBuilder(
+        builder: (sheetContext, setSheetState) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.lock_outline_rounded,
+                      color: Theme.of(sheetContext).colorScheme.primary,
+                      size: 26,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextFont(
+                        text: "Password-Protected Statement",
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                TextFont(
+                  text:
+                      "This PDF statement is encrypted. Enter the statement password to unlock (commonly Date of Birth in DDMMYYYY format, PAN number, or last digits of account/card).",
+                  fontSize: 13,
+                  maxLines: 4,
+                  textColor: getColor(sheetContext, "textLight"),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: passwordController,
+                  obscureText: obscurePassword,
+                  autofocus: true,
+                  decoration: InputDecoration(
+                    labelText: "Statement Password",
+                    hintText: "Enter PDF password",
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        obscurePassword
+                            ? Icons.visibility_outlined
+                            : Icons.visibility_off_outlined,
+                      ),
+                      onPressed: () {
+                        setSheetState(() {
+                          obscurePassword = !obscurePassword;
+                        });
+                      },
+                    ),
+                  ),
+                ),
+                if (errorMessage != null) ...[
+                  const SizedBox(height: 8),
+                  TextFont(
+                    text: errorMessage!,
+                    fontSize: 13,
+                    textColor: Theme.of(sheetContext).colorScheme.error,
+                  ),
+                ],
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Button(
+                        label: "Cancel",
+                        color: getColor(sheetContext, "canvasContainer"),
+                        textColor: getColor(sheetContext, "black"),
+                        onTap: () => Navigator.of(sheetContext).pop(),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Button(
+                        label: isDecrypting ? "Decrypting..." : "Unlock & Import",
+                        color: Theme.of(sheetContext).colorScheme.primary,
+                        textColor: Theme.of(sheetContext).colorScheme.onPrimary,
+                        disabled: isDecrypting,
+                        onTap: () async {
+                          final pwd = passwordController.text.trim();
+                          if (pwd.isEmpty) {
+                            setSheetState(() {
+                              errorMessage = "Please enter the password.";
+                            });
+                            return;
+                          }
+
+                          setSheetState(() {
+                            isDecrypting = true;
+                            errorMessage = null;
+                          });
+
+                          try {
+                            List<StatementEntry> entries =
+                                await StatementParser.parsePdfBytes(
+                              bytes,
+                              targetWalletPk: _selectedWalletPk,
+                              password: pwd,
+                            );
+
+                            if (entries.isEmpty) {
+                              try {
+                                final doc = PdfDocument(
+                                    inputBytes: bytes, password: pwd);
+                                final rawText =
+                                    PdfTextExtractor(doc).extractText();
+                                doc.dispose();
+                                if (rawText.trim().isNotEmpty) {
+                                  entries = await StatementParser
+                                      .parseStatementWithAi(
+                                    rawText,
+                                    targetWalletPk: _selectedWalletPk,
+                                  );
+                                }
+                              } catch (_) {}
+                            }
+
+                            if (!mounted) return;
+                            Navigator.of(sheetContext).pop();
+
+                            setState(() {
+                              _parsedEntries = entries;
+                              _isProcessing = false;
+                            });
+
+                            if (entries.isEmpty) {
+                              openSnackbar(
+                                SnackbarMessage(
+                                  title: "No Transactions Detected",
+                                  description:
+                                      "Document unlocked, but no transaction entries could be detected.",
+                                  icon: Icons.warning_amber_rounded,
+                                ),
+                              );
+                            } else {
+                              openSnackbar(
+                                SnackbarMessage(
+                                  title: "Statement Unlocked",
+                                  description:
+                                      "Successfully parsed ${entries.length} transactions.",
+                                  icon: Icons.check_circle_outline_rounded,
+                                ),
+                              );
+                            }
+                          } on PdfPasswordException catch (pe) {
+                            setSheetState(() {
+                              isDecrypting = false;
+                              errorMessage = pe.message;
+                            });
+                          } catch (e) {
+                            setSheetState(() {
+                              isDecrypting = false;
+                              errorMessage = e.toString();
+                            });
+                          }
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
   }
 
   void _loadSampleStatement() {
@@ -830,6 +1024,7 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
           child: Row(
             children: [
               Expanded(
+                flex: 3,
                 child: Button(
                   label: "Upload Statement",
                   icon: Icons.upload_file_rounded,
@@ -839,12 +1034,15 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                 ),
               ),
               const SizedBox(width: 10),
-              Button(
-                label: "Try Sample",
-                icon: Icons.auto_awesome_rounded,
-                color: getColor(context, "dividerColor").withOpacity(0.2),
-                textColor: getColor(context, "black"),
-                onTap: _loadSampleStatement,
+              Expanded(
+                flex: 2,
+                child: Button(
+                  label: "Try Sample",
+                  icon: Icons.auto_awesome_rounded,
+                  color: getColor(context, "dividerColor").withOpacity(0.2),
+                  textColor: getColor(context, "black"),
+                  onTap: _loadSampleStatement,
+                ),
               ),
             ],
           ),
