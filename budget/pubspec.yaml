@@ -47,6 +47,8 @@ dependencies:
   auto_size_text: ^3.0.0
   shared_preferences: ^2.2.3
   csv: ^6.0.0
+  excel: ^4.0.6
+  syncfusion_flutter_pdf: any
   sliding_sheet:
     path: ./packages/sliding_sheet-0.5.2-modified/
   implicitly_animated_reorderable_list:

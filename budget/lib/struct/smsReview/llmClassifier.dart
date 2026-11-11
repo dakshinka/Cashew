@@ -1041,6 +1041,11 @@ Output strictly JSON:
     // If all candidate attempts failed, query the user's available model list
     try {
       final available = await listGeminiModels(cleanApiKey);
+      final isQuotaOrBilling = lastDetail.toLowerCase().contains("quota") ||
+          lastDetail.toLowerCase().contains("exhausted") ||
+          lastDetail.toLowerCase().contains("billing") ||
+          lastDetail.toLowerCase().contains("limit");
+
       if (available.isNotEmpty) {
         final freeList = available
             .where((m) => m["isFree"] == true)
@@ -1051,22 +1056,30 @@ Output strictly JSON:
             .map((m) => m["model"] as String)
             .toList();
 
-        lastAiError =
-            "Model '$requestedModel' not found or requires billing.\n" +
-            (freeList.isNotEmpty
-                ? "🟢 Free models available for your key: ${freeList.join(', ')}\n"
-                : "") +
-            (paidList.isNotEmpty
-                ? "🟡 Paid / billing required: ${paidList.join(', ')}\n"
-                : "") +
-            "Tip: Select 'gemini-flash-latest' or 'gemini-2.5-flash' in AI Settings.";
+        if (isQuotaOrBilling) {
+          lastAiError =
+              "Google Quota / Billing limitation for '$requestedModel':\n$lastDetail\n\n"
+              "💡 Explanation: Pro models require an active billing account in Google Cloud / AI Studio. "
+              "For 100% free usage without billing, switch model to: "
+              "${freeList.isNotEmpty ? freeList.join(', ') : 'gemini-flash-latest or gemini-2.5-flash'}.";
+        } else {
+          lastAiError =
+              "Google API error for '$requestedModel':\n$lastDetail\n\n" +
+              (freeList.isNotEmpty
+                  ? "🟢 Free models available for your key: ${freeList.join(', ')}\n"
+                  : "") +
+              (paidList.isNotEmpty
+                  ? "🟡 Paid / billing required: ${paidList.join(', ')}\n"
+                  : "") +
+              "Tip: Select 'gemini-flash-latest' or 'gemini-2.5-flash' in AI Settings.";
+        }
       } else {
         lastAiError =
             "Gemini API key is invalid or Generative Language API is not enabled in your Google Cloud / AI Studio project.\nDetail: $lastDetail";
       }
     } catch (_) {
       lastAiError =
-          "Gemini: models/$requestedModel not found or not supported for generateContent. Detail: $lastDetail";
+          "Gemini API error for '$requestedModel'. Detail: $lastDetail";
     }
     return null;
   }

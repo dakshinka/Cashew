@@ -1,5 +1,11 @@
+import 'dart:convert';
+import 'package:flutter/foundation.dart';
+import 'package:excel/excel.dart';
+import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/smsReview/aiCategorizer.dart';
+import 'package:budget/struct/smsReview/reviewManager.dart';
+import 'package:budget/struct/smsReview/llmClassifier.dart';
 import 'package:budget/struct/statementImporter/statementModels.dart';
 import 'package:csv/csv.dart';
 import 'package:intl/intl.dart';
@@ -182,7 +188,7 @@ class StatementParser {
     return isNeg ? -val.abs() : val;
   }
 
-  /// Parse CSV string into StatementEntry list and enrich with AI categorization
+  /// Parse CSV / TSV string into StatementEntry list and enrich with AI categorization
   static Future<List<StatementEntry>> parseCsv(
     String csvContent, {
     StatementColumnIndices? customIndices,
@@ -212,7 +218,240 @@ class StatementParser {
     );
 
     final rows = converter.convert(normalized);
+    return parseRows(rows,
+        customIndices: customIndices, targetWalletPk: targetWalletPk);
+  }
 
+  /// Parses binary Excel (.xlsx / .xls) spreadsheet bytes
+  static Future<List<StatementEntry>> parseExcelBytes(
+    List<int> bytes, {
+    StatementColumnIndices? customIndices,
+    String? targetWalletPk,
+  }) async {
+    try {
+      final excel = Excel.decodeBytes(bytes);
+      List<List<dynamic>> rows = [];
+      for (final table in excel.tables.keys) {
+        final sheet = excel.tables[table];
+        if (sheet != null && sheet.rows.isNotEmpty) {
+          for (final row in sheet.rows) {
+            rows.add(
+                row.map((cell) => cell?.value?.toString() ?? "").toList());
+          }
+          if (rows.length > 2) break; // Pick first populated sheet
+        }
+      }
+      if (rows.isNotEmpty) {
+        return await parseRows(rows,
+            customIndices: customIndices, targetWalletPk: targetWalletPk);
+      }
+    } catch (e) {
+      debugPrint("Error parsing Excel bytes: $e");
+    }
+    return [];
+  }
+
+  /// Parses digital PDF statement bytes (bank and credit card statements)
+  static Future<List<StatementEntry>> parsePdfBytes(
+    List<int> bytes, {
+    StatementColumnIndices? customIndices,
+    String? targetWalletPk,
+  }) async {
+    try {
+      final document = PdfDocument(inputBytes: bytes);
+      final extractor = PdfTextExtractor(document);
+      final fullText = extractor.extractText();
+      document.dispose();
+
+      if (fullText.trim().isEmpty) return [];
+
+      // 1. Try deterministic multi-line statement text parser
+      final entries = await parsePdfTextLines(fullText,
+          targetWalletPk: targetWalletPk);
+      if (entries.isNotEmpty) {
+        return entries;
+      }
+
+      // 2. If line layout is multi-column or transactions span pages 2/3 (e.g. credit card statements),
+      // invoke AI extraction helper
+      final aiEntries = await parseStatementWithAi(fullText,
+          targetWalletPk: targetWalletPk);
+      if (aiEntries.isNotEmpty) {
+        return aiEntries;
+      }
+    } catch (e) {
+      debugPrint("Error parsing PDF statement: $e");
+    }
+    return [];
+  }
+
+  /// Deterministic line parser for structured bank & credit card statement text
+  static Future<List<StatementEntry>> parsePdfTextLines(
+    String fullText, {
+    String? targetWalletPk,
+  }) async {
+    final lines = fullText
+        .split('\n')
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty)
+        .toList();
+    final List<StatementEntry> entries = [];
+
+    // Line matching pattern for common bank/credit card statement rows:
+    // e.g. "04/11/2026 SWIGGY BANGALORE 450.00" or "04-Nov-2026 STARBUCKS 320.00 Cr"
+    final lineRegex = RegExp(
+      r'^\s*([0-3]?[0-9][\/\-.][0-1]?[0-9][\/\-.][0-9]{2,4}|[0-3]?[0-9]\s+[A-Za-z]{3}\s+[0-9]{2,4})\s+(.+?)\s+([0-9]{1,3}(?:[,\s][0-9]{2,3})*(?:\.[0-9]{1,2})?)\s*(Cr|Dr|Credit|Debit)?\s*$',
+      caseSensitive: false,
+    );
+
+    for (final line in lines) {
+      final m = lineRegex.firstMatch(line);
+      if (m != null) {
+        final dateStr = m.group(1)!;
+        final narr = m.group(2)!.trim();
+        final amtStr = m.group(3)!;
+        final typeIndicator = m.group(4)?.toLowerCase();
+
+        final date = parseFlexibleDate(dateStr);
+        final amt = parseAmount(amtStr);
+        if (date == null || amt <= 0) continue;
+
+        // Skip non-transaction summary headers
+        final lowerNarr = narr.toLowerCase();
+        if (lowerNarr.contains("balance") ||
+            lowerNarr.contains("opening") ||
+            lowerNarr.contains("closing") ||
+            lowerNarr.contains("credit limit") ||
+            lowerNarr.contains("total amount due")) {
+          continue;
+        }
+
+        final isIncome = typeIndicator == "cr" || typeIndicator == "credit";
+        final cleanMerchant = AiCategorizer.cleanMerchantName(narr);
+        final aiSuggestion = await AiCategorizer.suggestCategory(cleanMerchant,
+            isIncome: isIncome);
+
+        entries.add(
+          StatementEntry(
+            date: date,
+            rawNarration: narr,
+            cleanMerchant: cleanMerchant,
+            amount: amt,
+            isIncome: isIncome,
+            suggestedCategoryName: aiSuggestion.categoryName,
+            suggestedCategoryPk: aiSuggestion.categoryPk,
+            confidence: aiSuggestion.confidence,
+          ),
+        );
+      }
+    }
+
+    if (targetWalletPk != null && targetWalletPk.isNotEmpty) {
+      await checkDuplicates(entries, targetWalletPk);
+    }
+    return entries;
+  }
+
+  /// AI-assisted statement extractor for complex, multi-column, or multi-page credit card statements
+  static Future<List<StatementEntry>> parseStatementWithAi(
+    String fullText, {
+    String? targetWalletPk,
+  }) async {
+    try {
+      final lines = fullText.split('\n');
+      final transactionLines = lines.where((l) {
+        final lower = l.toLowerCase();
+        return RegExp(
+                    r'[0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4}|[0-9]{1,2}\s+[A-Za-z]{3}')
+                .hasMatch(l) &&
+            RegExp(r'[0-9]+(?:\.[0-9]{2})?').hasMatch(l) &&
+            !lower.contains("statement summary") &&
+            !lower.contains("credit limit") &&
+            !lower.contains("payment due");
+      }).take(100).join('\n');
+
+      final sample = transactionLines.isNotEmpty
+          ? transactionLines
+          : lines.take(150).join('\n');
+
+      final prompt = '''
+You are an expert credit card and bank statement extraction engine.
+Extract all actual individual transactions (purchases, payments, transfers) from this statement text into a JSON array.
+Skip header information, summary balances, reward points, and credit limits.
+
+Statement text:
+"""
+$sample
+"""
+
+Respond ONLY with valid JSON array:
+[
+  {
+    "date": "YYYY-MM-DD",
+    "description": "merchant or payee",
+    "amount": 250.0,
+    "isIncome": false
+  }
+]
+''';
+
+      final resText = await LlmClassifier.queryActiveLlm(prompt);
+      if (resText != null && resText.isNotEmpty) {
+        final cleanJson =
+            resText.replaceAll(RegExp(r'```json|```'), '').trim();
+        final dynamic decoded = jsonDecode(cleanJson);
+        if (decoded is List) {
+          final List<StatementEntry> entries = [];
+          for (final item in decoded) {
+            if (item is! Map) continue;
+            final dateStr = item["date"]?.toString() ?? "";
+            final date = DateTime.tryParse(dateStr) ??
+                parseFlexibleDate(dateStr) ??
+                DateTime.now();
+            final desc = item["description"]?.toString() ?? "Transaction";
+            final amt = (item["amount"] is num)
+                ? (item["amount"] as num).toDouble().abs()
+                : parseAmount(item["amount"]?.toString() ?? "0");
+            final isIncome = item["isIncome"] == true;
+            if (amt <= 0) continue;
+
+            final cleanMerchant = AiCategorizer.cleanMerchantName(desc);
+            final aiSuggestion = await AiCategorizer.suggestCategory(
+                cleanMerchant,
+                isIncome: isIncome);
+
+            entries.add(
+              StatementEntry(
+                date: date,
+                rawNarration: desc,
+                cleanMerchant: cleanMerchant,
+                amount: amt,
+                isIncome: isIncome,
+                suggestedCategoryName: aiSuggestion.categoryName,
+                suggestedCategoryPk: aiSuggestion.categoryPk,
+                confidence: aiSuggestion.confidence,
+              ),
+            );
+          }
+
+          if (targetWalletPk != null && targetWalletPk.isNotEmpty) {
+            await checkDuplicates(entries, targetWalletPk);
+          }
+          return entries;
+        }
+      }
+    } catch (e) {
+      debugPrint("AI statement extraction error: $e");
+    }
+    return [];
+  }
+
+  /// Shared engine that maps tabular rows into StatementEntry items
+  static Future<List<StatementEntry>> parseRows(
+    List<List<dynamic>> rows, {
+    StatementColumnIndices? customIndices,
+    String? targetWalletPk,
+  }) async {
     if (rows.isEmpty) return [];
 
     final indices = customIndices ?? detectColumns(rows);
@@ -229,9 +468,10 @@ class StatementParser {
       final date = parseFlexibleDate(rawDate);
       if (date == null) continue; // Skip footer / summary rows
 
-      final rawNarr = indices.narrationCol >= 0 && indices.narrationCol < row.length
-          ? row[indices.narrationCol].toString().trim()
-          : "Transaction";
+      final rawNarr =
+          indices.narrationCol >= 0 && indices.narrationCol < row.length
+              ? row[indices.narrationCol].toString().trim()
+              : "Transaction";
 
       if (rawNarr.isEmpty) continue;
 
@@ -299,7 +539,7 @@ class StatementParser {
       );
     }
 
-    // Duplicate detection against Drift DB
+    // Reconcile against both database transactions and Review Inbox
     if (targetWalletPk != null && targetWalletPk.isNotEmpty) {
       await checkDuplicates(entries, targetWalletPk);
     }
@@ -307,7 +547,7 @@ class StatementParser {
     return entries;
   }
 
-  /// Checks existing transactions in wallet around statement dates to flag duplicates
+  /// Checks existing transactions in wallet and Review Inbox to reconcile and flag duplicates
   static Future<void> checkDuplicates(
     List<StatementEntry> entries,
     String walletPk,
@@ -325,6 +565,7 @@ class StatementParser {
     final searchStart = minDate.subtract(const Duration(days: 2));
     final searchEnd = maxDate.add(const Duration(days: 2));
 
+    // 1. Reconcile against persisted transactions in SQLite database
     final walletTransactions =
         await database.getAllTransactionsFromWallet(walletPk);
     final existing = walletTransactions
@@ -333,19 +574,49 @@ class StatementParser {
             t.dateCreated.isBefore(searchEnd))
         .toList();
 
+    // 2. Reconcile against pending SMS in Review Inbox
+    final pendingSms = ReviewManager.instance.pendingTransactions;
+
     for (final entry in entries) {
+      // Check SQLite DB
+      bool matched = false;
       for (final tx in existing) {
         final diffDays = entry.date.difference(tx.dateCreated).inDays.abs();
         final amountMatches = (tx.amount.abs() - entry.amount).abs() < 0.01;
         final typeMatches = (tx.income == entry.isIncome);
 
         if (diffDays <= 1 && amountMatches && typeMatches) {
-          entry.duplicateState = DuplicateState.potentialDuplicate;
-          entry.isSelected = false; // Deselect by default to prevent accidental double-count
+          entry.duplicateState = DuplicateState.confirmedDuplicate;
+          entry.isSelected = false; // Deselect already-reconciled items
           entry.duplicateReason =
-              "Matches existing '${tx.name}' on ${DateFormat('dd MMM').format(tx.dateCreated)}";
+              "Reconciled with existing '${tx.name}' (${DateFormat('dd MMM').format(tx.dateCreated)})";
+          matched = true;
           break;
         }
+      }
+
+      if (!matched) {
+        // Check Review Inbox pending SMS
+        for (final item in pendingSms) {
+          final diffDays = entry.date.difference(item.date).inDays.abs();
+          final amountMatches = (item.amount.abs() - entry.amount).abs() < 0.01;
+          final typeMatches = (item.isIncome == entry.isIncome);
+
+          if (diffDays <= 1 && amountMatches && typeMatches) {
+            entry.duplicateState = DuplicateState.potentialDuplicate;
+            entry.isSelected = false;
+            entry.duplicateReason =
+                "Matches pending SMS in Review Inbox: '${item.cleanMerchant}' (${DateFormat('dd MMM').format(item.date)})";
+            matched = true;
+            break;
+          }
+        }
+      }
+
+      if (!matched) {
+        entry.duplicateState = DuplicateState.unique;
+        entry.isSelected = true; // Selected by default to import missing transactions!
+        entry.duplicateReason = "Missing from account (No SMS or record found)";
       }
     }
   }

@@ -1138,13 +1138,60 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
                             ),
                             const SizedBox(width: 8),
                             Expanded(
-                              child: TextFont(
-                                text: testConnectionResult!["message"] ?? "",
-                                fontSize: 12,
-                                textColor: testConnectionResult!["success"] == true
-                                    ? Colors.green
-                                    : Colors.redAccent,
-                                maxLines: 5,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  TextFont(
+                                    text: testConnectionResult!["message"] ?? "",
+                                    fontSize: 12,
+                                    textColor: testConnectionResult!["success"] == true
+                                        ? Colors.green
+                                        : Colors.redAccent,
+                                    maxLines: 25,
+                                  ),
+                                  if (testConnectionResult!["success"] != true &&
+                                      selectedProvider == "gemini" &&
+                                      (testConnectionResult!["message"]?.toString().contains("Quota") == true ||
+                                          testConnectionResult!["message"]?.toString().contains("billing") == true ||
+                                          testConnectionResult!["message"]?.toString().contains("limitation") == true ||
+                                          geminiModelController.text.contains("pro"))) ...[
+                                    const SizedBox(height: 8),
+                                    InkWell(
+                                      onTap: () {
+                                        setSheetState(() {
+                                          geminiModelController.text = "gemini-flash-latest";
+                                          testConnectionResult = null;
+                                        });
+                                      },
+                                      borderRadius: BorderRadius.circular(6),
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 8, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: Colors.green.withOpacity(0.15),
+                                          borderRadius: BorderRadius.circular(6),
+                                          border: Border.all(
+                                            color: Colors.green.withOpacity(0.4),
+                                          ),
+                                        ),
+                                        child: const Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(Icons.bolt_rounded,
+                                                size: 14, color: Colors.green),
+                                            SizedBox(width: 4),
+                                            TextFont(
+                                              text: "Switch to Free 'gemini-flash-latest'",
+                                              fontSize: 11,
+                                              textColor: Colors.green,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ],
                               ),
                             ),
                           ],

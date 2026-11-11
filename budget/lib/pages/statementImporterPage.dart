@@ -32,6 +32,7 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
   List<StatementEntry> _parsedEntries = [];
   bool _isProcessing = false;
   String? _loadedFileName;
+  String _filterMode = "all"; // "all", "missing", "reconciled"
 
   @override
   void initState() {
@@ -43,31 +44,67 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['csv', 'txt', 'tsv'],
+        allowedExtensions: ['csv', 'txt', 'tsv', 'xlsx', 'xls', 'pdf'],
       );
 
       if (result == null || result.files.isEmpty) return;
 
-      String content = "";
       final file = result.files.first;
       _loadedFileName = file.name;
+      final ext = file.extension?.toLowerCase() ?? '';
 
+      List<int>? bytes;
       if (kIsWeb) {
-        if (file.bytes != null) {
-          content = utf8.decode(file.bytes!);
-        }
+        bytes = file.bytes;
       } else if (file.path != null) {
-        content = await File(file.path!).readAsString();
+        bytes = await File(file.path!).readAsBytes();
       }
 
-      if (content.isNotEmpty) {
-        await _processCsvContent(content);
+      if (bytes == null || bytes.isEmpty) return;
+
+      setState(() => _isProcessing = true);
+
+      List<StatementEntry> entries = [];
+      if (ext == 'xlsx' || ext == 'xls') {
+        entries = await StatementParser.parseExcelBytes(
+          bytes,
+          targetWalletPk: _selectedWalletPk,
+        );
+      } else if (ext == 'pdf') {
+        entries = await StatementParser.parsePdfBytes(
+          bytes,
+          targetWalletPk: _selectedWalletPk,
+        );
+      } else {
+        // CSV / TSV / TXT
+        final content = utf8.decode(bytes, allowMalformed: true);
+        entries = await StatementParser.parseCsv(
+          content,
+          targetWalletPk: _selectedWalletPk,
+        );
+      }
+
+      setState(() {
+        _parsedEntries = entries;
+        _isProcessing = false;
+      });
+
+      if (entries.isEmpty) {
+        openSnackbar(
+          SnackbarMessage(
+            title: "No Transactions Found",
+            description:
+                "Could not extract transactions from $ext file. Try copy-pasting statement text.",
+            icon: Icons.warning_amber_rounded,
+          ),
+        );
       }
     } catch (e) {
+      setState(() => _isProcessing = false);
       debugPrint("Error picking file: $e");
       openSnackbar(
         SnackbarMessage(
-          title: "File Read Error",
+          title: "File Parse Error",
           description: e.toString(),
           icon: Icons.error_outline,
         ),
@@ -92,7 +129,8 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
         openSnackbar(
           SnackbarMessage(
             title: "No Transactions Found",
-            description: "Check if the file has date, narration, and amount columns.",
+            description:
+                "Check if the content has date, narration, and amount columns.",
             icon: Icons.warning_amber_rounded,
           ),
         );
@@ -370,57 +408,122 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
         // Summary Bar when entries are loaded
         if (_parsedEntries.isNotEmpty) ...[
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
             child: Container(
               padding: const EdgeInsetsDirectional.all(12),
               decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.secondaryContainer.withOpacity(0.4),
+                color: Theme.of(context)
+                    .colorScheme
+                    .secondaryContainer
+                    .withOpacity(0.4),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        TextFont(
-                          text: _loadedFileName ?? "Statement",
-                          fontSize: 14,
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            TextFont(
+                              text: _loadedFileName ?? "Statement",
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            const SizedBox(height: 2),
+                            TextFont(
+                              text:
+                                  "Reconciliation: $newCount Missing from Account • $dupCount Reconciled",
+                              fontSize: 12,
+                              textColor: getColor(context, "textLight"),
+                            ),
+                          ],
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          setState(() {
+                            final anyDeselected =
+                                _parsedEntries.any((e) => !e.isSelected);
+                            for (final e in _parsedEntries) {
+                              e.isSelected = anyDeselected;
+                            }
+                          });
+                        },
+                        child: TextFont(
+                          text: _parsedEntries.every((e) => e.isSelected)
+                              ? "Deselect All"
+                              : "Select All",
+                          fontSize: 12,
                           fontWeight: FontWeight.bold,
                         ),
-                        const SizedBox(height: 2),
-                        TextFont(
-                          text: "$newCount New  •  $dupCount Duplicates Skipped",
-                          fontSize: 12,
-                          textColor: getColor(context, "textLight"),
-                        ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
-                  TextButton(
-                    onPressed: () {
-                      setState(() {
-                        final anyDeselected = _parsedEntries.any((e) => !e.isSelected);
-                        for (final e in _parsedEntries) {
-                          e.isSelected = anyDeselected;
-                        }
-                      });
-                    },
-                    child: TextFont(
-                      text: _parsedEntries.every((e) => e.isSelected)
-                          ? "Deselect All"
-                          : "Select All",
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                    ),
+                  const SizedBox(height: 8),
+                  // Reconciliation Filter Chips
+                  Wrap(
+                    spacing: 6,
+                    children: [
+                      ChoiceChip(
+                        label: TextFont(
+                          text: "All (${_parsedEntries.length})",
+                          fontSize: 11,
+                          fontWeight: _filterMode == "all"
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                        ),
+                        selected: _filterMode == "all",
+                        onSelected: (_) =>
+                            setState(() => _filterMode = "all"),
+                      ),
+                      ChoiceChip(
+                        avatar: const Icon(Icons.add_circle_outline,
+                            size: 14, color: Colors.green),
+                        label: TextFont(
+                          text: "Missing to Import ($newCount)",
+                          fontSize: 11,
+                          fontWeight: _filterMode == "missing"
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                        ),
+                        selected: _filterMode == "missing",
+                        onSelected: (_) =>
+                            setState(() => _filterMode = "missing"),
+                      ),
+                      ChoiceChip(
+                        avatar: const Icon(Icons.check_circle_outline,
+                            size: 14, color: Colors.blue),
+                        label: TextFont(
+                          text: "Reconciled ($dupCount)",
+                          fontSize: 11,
+                          fontWeight: _filterMode == "reconciled"
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                        ),
+                        selected: _filterMode == "reconciled",
+                        onSelected: (_) =>
+                            setState(() => _filterMode = "reconciled"),
+                      ),
+                    ],
                   ),
                 ],
               ),
             ),
           ),
 
-          // Entries List
-          ..._parsedEntries.map((entry) => _buildEntryRow(entry)).toList(),
+          // Entries List (Filtered by reconciliation state)
+          ..._parsedEntries.where((e) {
+            if (_filterMode == "missing") {
+              return e.duplicateState == DuplicateState.unique;
+            } else if (_filterMode == "reconciled") {
+              return e.duplicateState != DuplicateState.unique;
+            }
+            return true;
+          }).map((entry) => _buildEntryRow(entry)),
 
           // Bottom Import CTA
           Padding(
@@ -435,7 +538,8 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
           ),
         ] else if (!_isProcessing) ...[
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 48.0),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 24.0, vertical: 48.0),
             child: Center(
               child: Column(
                 children: [
@@ -453,7 +557,7 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                   const SizedBox(height: 8),
                   TextFont(
                     text:
-                        "Upload your bank statement (.csv) or tap 'Try Sample' to see AI merchant cleaning and duplicate prevention in action.",
+                        "Upload your bank or credit card statement (.pdf, .xlsx, .xls, .csv, .txt) or tap 'Try Sample' to see AI categorization, account reconciliation, and duplicate prevention in action.",
                     textAlign: TextAlign.center,
                     fontSize: 13,
                     textColor: getColor(context, "textLight"),
@@ -486,8 +590,8 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: isDup
-                ? Colors.amber.withOpacity(0.6)
-                : getColor(context, "dividerColor").withOpacity(0.3),
+                ? Colors.blue.withOpacity(0.4)
+                : Colors.green.withOpacity(0.4),
           ),
         ),
         child: CheckboxListTile(
@@ -495,7 +599,8 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
           onChanged: (val) {
             setState(() => entry.isSelected = val ?? false);
           },
-          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
           title: Row(
             children: [
               Expanded(
@@ -526,9 +631,13 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                   ),
                   const SizedBox(width: 8),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
+                      color: Theme.of(context)
+                          .colorScheme
+                          .primary
+                          .withOpacity(0.1),
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Row(
@@ -551,18 +660,36 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                   ),
                 ],
               ),
-              if (isDup && entry.duplicateReason != null) ...[
+              if (!isDup) ...[
                 const SizedBox(height: 4),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
-                    color: Colors.amber.withOpacity(0.15),
+                    color: Colors.green.withOpacity(0.12),
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: TextFont(
-                    text: "⚠️ ${entry.duplicateReason!}",
+                    text:
+                        "✨ Missing from Cashew (No SMS found - Ready to import)",
                     fontSize: 11,
-                    textColor: Colors.amber[900],
+                    fontWeight: FontWeight.w600,
+                    textColor: Colors.green[800],
+                  ),
+                ),
+              ] else if (entry.duplicateReason != null) ...[
+                const SizedBox(height: 4),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: TextFont(
+                    text: "✓ ${entry.duplicateReason!}",
+                    fontSize: 11,
+                    textColor: Colors.blue[900],
                   ),
                 ),
               ],
