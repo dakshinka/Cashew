@@ -15,6 +15,7 @@ import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/settings.dart';
 import 'package:budget/struct/statementImporter/statementModels.dart';
 import 'package:budget/struct/statementImporter/statementParser.dart';
+import 'package:budget/struct/creditCard/creditCardManager.dart';
 import 'package:budget/widgets/button.dart';
 import 'package:budget/widgets/framework/pageFramework.dart';
 import 'package:budget/widgets/navigationFramework.dart';
@@ -39,6 +40,7 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
   String? _stageMessage;
   String? _loadedFileName;
   String _filterMode = "all"; // "all", "missing", "reconciled"
+  CreditCardStatementSummary? _creditCardSummary;
 
   @override
   void initState() {
@@ -152,6 +154,7 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
 
       setState(() {
         _parsedEntries = entries;
+        _creditCardSummary = StatementParser.lastExtractedSummary;
         _isProcessing = false;
         _stageMessage = null;
       });
@@ -189,6 +192,7 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
 
       setState(() {
         _parsedEntries = entries;
+        _creditCardSummary = StatementParser.lastExtractedSummary;
         _isProcessing = false;
       });
 
@@ -355,6 +359,8 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
 
                             setState(() {
                               _parsedEntries = entries;
+                              _creditCardSummary =
+                                  StatementParser.lastExtractedSummary;
                               _isProcessing = false;
                               _stageMessage = null;
                             });
@@ -1656,6 +1662,8 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
             ),
           ),
 
+          _buildCreditCardSummaryCard(),
+
           // Entries List (Filtered by reconciliation state)
           ..._parsedEntries.where((e) {
             if (_filterMode == "missing") {
@@ -1720,6 +1728,265 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
     );
   }
 
+  Widget _buildCreditCardSummaryCard() {
+    if (_creditCardSummary == null || !_creditCardSummary!.hasData) {
+      return const SizedBox.shrink();
+    }
+
+    final s = _creditCardSummary!;
+    final allWallets = Provider.of<AllWallets>(context, listen: false);
+    final wallet = allWallets.indexedByPk[_selectedWalletPk];
+    final currency = wallet?.currency ?? "₹";
+
+    final totalDueStr = s.totalAmountDue != null
+        ? "$currency${s.totalAmountDue!.toStringAsFixed(2)}"
+        : null;
+    final minDueStr = s.minAmountDue != null
+        ? "$currency${s.minAmountDue!.toStringAsFixed(2)}"
+        : null;
+    final financeChargesStr = s.financeCharges != null
+        ? "$currency${s.financeCharges!.toStringAsFixed(2)}"
+        : null;
+    final gstStr = s.gstCharges != null
+        ? "$currency${s.gstCharges!.toStringAsFixed(2)}"
+        : null;
+
+    final dateFormat = DateFormat('dd MMM yyyy');
+
+    int? gracePeriodDays;
+    if (s.statementDate != null && s.dueDate != null) {
+      gracePeriodDays = s.dueDate!.difference(s.statementDate!).inDays;
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.primaryContainer.withOpacity(0.35),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: Theme.of(context).colorScheme.primary.withOpacity(0.3),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.credit_score_rounded,
+                  color: Theme.of(context).colorScheme.primary,
+                  size: 26,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      TextFont(
+                        text: "Credit Card Billing Statement Details",
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                        textColor:
+                            Theme.of(context).colorScheme.onPrimaryContainer,
+                      ),
+                      TextFont(
+                        text: "Extracted from official statement",
+                        fontSize: 11,
+                        textColor: getColor(context, "textLight"),
+                      ),
+                    ],
+                  ),
+                ),
+                if (wallet != null)
+                  Button(
+                    label: "Sync Card",
+                    icon: Icons.sync_rounded,
+                    color: Theme.of(context).colorScheme.primary,
+                    textColor: Theme.of(context).colorScheme.onPrimary,
+                    padding: const EdgeInsetsDirectional.symmetric(
+                        horizontal: 10, vertical: 6),
+                    fontSize: 12,
+                    onTap: () async {
+                      final config =
+                          CreditCardManager.instance.getConfig(wallet.walletPk);
+                      if (s.statementDate != null) {
+                        config.billingCycleDay = s.statementDate!.day;
+                      }
+                      if (gracePeriodDays != null &&
+                          gracePeriodDays >= 5 &&
+                          gracePeriodDays <= 45) {
+                        config.gracePeriodDays = gracePeriodDays;
+                      }
+                      if (s.creditLimit != null && s.creditLimit! > 0) {
+                        config.creditLimit = s.creditLimit!;
+                      }
+                      config.isEnabled = true;
+                      await CreditCardManager.instance.saveConfig(config);
+                      openSnackbar(
+                        SnackbarMessage(
+                          title: "Card Settings Synchronized",
+                          description:
+                              "Statement day (${config.billingCycleDay}), grace period (${config.gracePeriodDays} days) updated.",
+                          icon: Icons.check_circle_rounded,
+                        ),
+                      );
+                    },
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                if (s.statementDate != null)
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      TextFont(
+                        text: "Statement Date:",
+                        fontSize: 11,
+                        textColor: getColor(context, "textLight"),
+                      ),
+                      TextFont(
+                        text: dateFormat.format(s.statementDate!),
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ],
+                  ),
+                if (s.dueDate != null)
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      TextFont(
+                        text: "Payment Due Date:",
+                        fontSize: 11,
+                        textColor: getColor(context, "textLight"),
+                      ),
+                      TextFont(
+                        text:
+                            "${dateFormat.format(s.dueDate!)}${gracePeriodDays != null ? ' ($gracePeriodDays days)' : ''}",
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                        textColor: Colors.red.shade800,
+                      ),
+                    ],
+                  ),
+              ],
+            ),
+            if (totalDueStr != null || minDueStr != null) ...[
+              const SizedBox(height: 10),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  if (totalDueStr != null)
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        TextFont(
+                          text: "Total Amount Due:",
+                          fontSize: 11,
+                          textColor: getColor(context, "textLight"),
+                        ),
+                        TextFont(
+                          text: totalDueStr,
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ],
+                    ),
+                  if (minDueStr != null)
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        TextFont(
+                          text: "Minimum Due:",
+                          fontSize: 11,
+                          textColor: getColor(context, "textLight"),
+                        ),
+                        TextFont(
+                          text: minDueStr,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+            ],
+            if (financeChargesStr != null) ...[
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.red.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.red.withOpacity(0.3)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.warning_amber_rounded,
+                        color: Colors.red.shade700, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextFont(
+                        text:
+                            "Bank Charged Interest: $financeChargesStr${gstStr != null ? ' + $gstStr GST' : ''} billed this cycle.",
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        textColor: Colors.red.shade900,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            if (s.emiSummaries.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.deepPurple.withOpacity(0.06),
+                  borderRadius: BorderRadius.circular(10),
+                  border:
+                      Border.all(color: Colors.deepPurple.withOpacity(0.25)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.calendar_month_rounded,
+                            color: Colors.deepPurple.shade700, size: 18),
+                        const SizedBox(width: 6),
+                        TextFont(
+                          text: "Active Card EMIs (${s.emiSummaries.length}):",
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          textColor: Colors.deepPurple.shade900,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    for (final emi in s.emiSummaries.take(3))
+                      TextFont(
+                        text: "• $emi",
+                        fontSize: 10,
+                        textColor: Colors.deepPurple.shade800,
+                        maxLines: 2,
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildEntryRow(StatementEntry entry) {
     final currency = Provider.of<AllWallets>(context, listen: false)
             .indexedByPk[_selectedWalletPk]?.currency ??
@@ -1742,7 +2009,22 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
     String statusTitle;
     IconData statusIcon;
 
-    if (isTransfer) {
+    if (entry.isCreditCardInterest) {
+      accentColor = Colors.red.shade800;
+      bgTint = Colors.red.withOpacity(0.08);
+      statusTitle = "⚡ Bank Finance Charge / Interest Billed";
+      statusIcon = Icons.error_outline_rounded;
+    } else if (entry.isCreditCardGst) {
+      accentColor = Colors.orange.shade800;
+      bgTint = Colors.orange.withOpacity(0.06);
+      statusTitle = "🏛️ GST on Finance Charges";
+      statusIcon = Icons.receipt_long_rounded;
+    } else if (entry.isCreditCardEmi) {
+      accentColor = Colors.deepPurple.shade700;
+      bgTint = Colors.deepPurple.withOpacity(0.06);
+      statusTitle = "📅 Credit Card EMI Installment";
+      statusIcon = Icons.calendar_month_rounded;
+    } else if (isTransfer) {
       accentColor = Colors.blue.shade800;
       bgTint = Colors.blue.withOpacity(0.06);
       statusTitle =

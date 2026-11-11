@@ -31,6 +31,11 @@ class StatementEntry {
   bool isUserReviewed;
   String? matchedSource;
 
+  // Credit card specific fields
+  bool isCreditCardInterest;
+  bool isCreditCardGst;
+  bool isCreditCardEmi;
+
   StatementEntry({
     String? id,
     required this.date,
@@ -51,7 +56,41 @@ class StatementEntry {
     this.destinationWalletPk,
     this.isUserReviewed = false,
     this.matchedSource,
+    this.isCreditCardInterest = false,
+    this.isCreditCardGst = false,
+    this.isCreditCardEmi = false,
   }) : id = id ?? _uuid.v4();
+}
+
+class CreditCardStatementSummary {
+  final DateTime? statementDate;
+  final DateTime? dueDate;
+  final double? totalAmountDue;
+  final double? minAmountDue;
+  final double? creditLimit;
+  final double? availableCredit;
+  final double? financeCharges;
+  final double? gstCharges;
+  final List<String> emiSummaries;
+
+  CreditCardStatementSummary({
+    this.statementDate,
+    this.dueDate,
+    this.totalAmountDue,
+    this.minAmountDue,
+    this.creditLimit,
+    this.availableCredit,
+    this.financeCharges,
+    this.gstCharges,
+    this.emiSummaries = const [],
+  });
+
+  bool get hasData =>
+      statementDate != null ||
+      dueDate != null ||
+      totalAmountDue != null ||
+      financeCharges != null ||
+      emiSummaries.isNotEmpty;
 }
 
 class StatementColumnIndices {

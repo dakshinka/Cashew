@@ -25,6 +25,111 @@ class PdfPasswordException implements Exception {
 }
 
 class StatementParser {
+  static CreditCardStatementSummary? lastExtractedSummary;
+
+  /// Extracts credit card statement metadata (Statement date, due date, total due, interest charges, EMIs)
+  static CreditCardStatementSummary extractCreditCardSummary(String fullText) {
+    DateTime? statementDate;
+    final stmtDateMatch = RegExp(
+      r'(?:statement|billing)\s*date\s*[:\-]?\s*([0-3]?[0-9][\/\-.][0-1]?[0-9][\/\-.][0-9]{2,4}|[0-3]?[0-9]\s+[A-Za-z]{3}\s+[0-9]{2,4}|[0-3]?[0-9]-[A-Za-z]{3}-[0-9]{2,4})',
+      caseSensitive: false,
+    ).firstMatch(fullText);
+    if (stmtDateMatch != null) {
+      statementDate = parseFlexibleDate(stmtDateMatch.group(1)!);
+    }
+
+    DateTime? dueDate;
+    final dueDateMatch = RegExp(
+      r'(?:payment\s*due\s*date|due\s*date)\s*[:\-]?\s*([0-3]?[0-9][\/\-.][0-1]?[0-9][\/\-.][0-9]{2,4}|[0-3]?[0-9]\s+[A-Za-z]{3}\s+[0-9]{2,4}|[0-3]?[0-9]-[A-Za-z]{3}-[0-9]{2,4})',
+      caseSensitive: false,
+    ).firstMatch(fullText);
+    if (dueDateMatch != null) {
+      dueDate = parseFlexibleDate(dueDateMatch.group(1)!);
+    }
+
+    double? totalDue;
+    final totalDueMatch = RegExp(
+      r'total\s*amount\s*due\s*[:\-]?\s*(?:rs\.?|inr|₹)?\s*([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{2})?)',
+      caseSensitive: false,
+    ).firstMatch(fullText);
+    if (totalDueMatch != null) {
+      totalDue = parseAmount(totalDueMatch.group(1)!);
+    }
+
+    double? minDue;
+    final minDueMatch = RegExp(
+      r'(?:minimum|min\.?)\s*amount\s*due\s*[:\-]?\s*(?:rs\.?|inr|₹)?\s*([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{2})?)',
+      caseSensitive: false,
+    ).firstMatch(fullText);
+    if (minDueMatch != null) {
+      minDue = parseAmount(minDueMatch.group(1)!);
+    }
+
+    double? limit;
+    final limitMatch = RegExp(
+      r'(?:total\s*)?credit\s*limit\s*[:\-]?\s*(?:rs\.?|inr|₹)?\s*([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{2})?)',
+      caseSensitive: false,
+    ).firstMatch(fullText);
+    if (limitMatch != null) {
+      limit = parseAmount(limitMatch.group(1)!);
+    }
+
+    double? avlLimit;
+    final avlMatch = RegExp(
+      r'available\s*(?:credit|limit)\s*[:\-]?\s*(?:rs\.?|inr|₹)?\s*([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{2})?)',
+      caseSensitive: false,
+    ).firstMatch(fullText);
+    if (avlMatch != null) {
+      avlLimit = parseAmount(avlMatch.group(1)!);
+    }
+
+    double? financeCharges;
+    final financeMatch = RegExp(
+      r'(?:finance|interest)\s*charges?\s*[:\-]?\s*(?:rs\.?|inr|₹)?\s*([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{2})?)',
+      caseSensitive: false,
+    ).firstMatch(fullText);
+    if (financeMatch != null) {
+      financeCharges = parseAmount(financeMatch.group(1)!);
+    }
+
+    double? gstCharges;
+    final gstMatch = RegExp(
+      r'(?:total\s*taxes|igst|gst\s*on\s*charges)\s*[:\-]?\s*(?:rs\.?|inr|₹)?\s*([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{2})?)',
+      caseSensitive: false,
+    ).firstMatch(fullText);
+    if (gstMatch != null) {
+      gstCharges = parseAmount(gstMatch.group(1)!);
+    }
+
+    final List<String> emis = [];
+    final lines = fullText.split('\n');
+    for (final l in lines) {
+      final upper = l.toUpperCase();
+      if ((upper.contains('EMI') || upper.contains('LOAN ON CARD')) &&
+          RegExp(r'[0-9]+(?:\.[0-9]{2})?').hasMatch(l)) {
+        final clean = l.replaceAll(RegExp(r'\s+'), ' ').trim();
+        if (clean.length > 5 && !emis.contains(clean)) {
+          emis.add(clean);
+        }
+      }
+    }
+
+    final summary = CreditCardStatementSummary(
+      statementDate: statementDate,
+      dueDate: dueDate,
+      totalAmountDue: totalDue,
+      minAmountDue: minDue,
+      creditLimit: limit,
+      availableCredit: avlLimit,
+      financeCharges: financeCharges,
+      gstCharges: gstCharges,
+      emiSummaries: emis,
+    );
+
+    lastExtractedSummary = summary;
+    return summary;
+  }
+
   /// Detect columns automatically from parsed rows
   static StatementColumnIndices detectColumns(List<List<dynamic>> rows) {
     final indices = StatementColumnIndices();
@@ -628,6 +733,8 @@ class StatementParser {
 
       if (fullText.trim().isEmpty) return [];
 
+      lastExtractedSummary = extractCreditCardSummary(fullText);
+
       // 1. Try deterministic multi-line statement text parser
       final entries = await parsePdfTextLines(fullText,
           targetWalletPk: targetWalletPk);
@@ -785,12 +892,51 @@ class StatementParser {
       narr = narr.replaceAll(RegExp(r'\s+'), ' ').trim();
       if (narr.isEmpty) narr = "Bank Transaction";
 
+      final lowerNarr = narr.toLowerCase();
       final isCash = isCashWithdrawalNarration(narr);
-      final cleanMerchant = isCash
-          ? "ATM Cash Withdrawal"
-          : AiCategorizer.cleanMerchantName(narr);
-      final aiSuggestion = await AiCategorizer.suggestCategory(cleanMerchant,
-          isIncome: isIncome);
+      final isInterest = lowerNarr.contains("finance charge") ||
+          lowerNarr.contains("interest charge") ||
+          lowerNarr.contains("interest on purchase") ||
+          lowerNarr.contains("fc @");
+      final isGst = lowerNarr.contains("igst") ||
+          lowerNarr.contains("cgst") ||
+          lowerNarr.contains("sgst") ||
+          lowerNarr.contains("gst on");
+      final isEmi = lowerNarr.contains("emi ") ||
+          lowerNarr.contains("smart emi") ||
+          lowerNarr.contains("merchant emi") ||
+          lowerNarr.contains("loan on card");
+
+      String cleanMerchant;
+      String catName;
+      double confidence;
+
+      if (isInterest) {
+        cleanMerchant = "Finance Charges / Interest";
+        catName = "Bank Charges & Fees";
+        confidence = 0.99;
+        isIncome = false;
+      } else if (isGst) {
+        cleanMerchant = "GST on Finance Charges";
+        catName = "Taxes & Fees";
+        confidence = 0.99;
+        isIncome = false;
+      } else if (isEmi) {
+        cleanMerchant = AiCategorizer.cleanMerchantName(narr);
+        catName = "Loans & Debt";
+        confidence = 0.95;
+        isIncome = false;
+      } else if (isCash) {
+        cleanMerchant = "ATM Cash Withdrawal";
+        catName = "Cash & ATM";
+        confidence = 0.99;
+      } else {
+        cleanMerchant = AiCategorizer.cleanMerchantName(narr);
+        final aiSuggestion = await AiCategorizer.suggestCategory(cleanMerchant,
+            isIncome: isIncome);
+        catName = aiSuggestion.categoryName;
+        confidence = aiSuggestion.confidence;
+      }
 
       entries.add(
         StatementEntry(
@@ -801,12 +947,14 @@ class StatementParser {
           isIncome: isIncome,
           referenceNo: explicitRef,
           balance: balance,
-          suggestedCategoryName:
-              isCash ? "Cash & ATM" : aiSuggestion.categoryName,
-          suggestedCategoryPk: aiSuggestion.categoryPk,
-          confidence: isCash ? 0.99 : aiSuggestion.confidence,
+          suggestedCategoryName: catName,
+          suggestedCategoryPk: null,
+          confidence: confidence,
           isCashWithdrawal: isCash,
           isTransferToCash: isCash,
+          isCreditCardInterest: isInterest,
+          isCreditCardGst: isGst,
+          isCreditCardEmi: isEmi,
         ),
       );
     }
@@ -994,13 +1142,52 @@ Respond ONLY with valid JSON array:
         bal = parseAmount(row[indices.balanceCol!].toString());
       }
 
-      // Check for Cash / ATM withdrawal
+      // Check for Cash / ATM withdrawal and Credit Card charges
+      final lowerNarr = rawNarr.toLowerCase();
       final isCash = isCashWithdrawalNarration(rawNarr);
-      final cleanMerchant = isCash
-          ? "ATM Cash Withdrawal"
-          : AiCategorizer.cleanMerchantName(rawNarr);
-      final aiSuggestion = await AiCategorizer.suggestCategory(cleanMerchant,
-          isIncome: isIncome);
+      final isInterest = lowerNarr.contains("finance charge") ||
+          lowerNarr.contains("interest charge") ||
+          lowerNarr.contains("interest on purchase") ||
+          lowerNarr.contains("fc @");
+      final isGst = lowerNarr.contains("igst") ||
+          lowerNarr.contains("cgst") ||
+          lowerNarr.contains("sgst") ||
+          lowerNarr.contains("gst on");
+      final isEmi = lowerNarr.contains("emi ") ||
+          lowerNarr.contains("smart emi") ||
+          lowerNarr.contains("merchant emi") ||
+          lowerNarr.contains("loan on card");
+
+      String cleanMerchant;
+      String catName;
+      double confidence;
+
+      if (isInterest) {
+        cleanMerchant = "Finance Charges / Interest";
+        catName = "Bank Charges & Fees";
+        confidence = 0.99;
+        isIncome = false;
+      } else if (isGst) {
+        cleanMerchant = "GST on Finance Charges";
+        catName = "Taxes & Fees";
+        confidence = 0.99;
+        isIncome = false;
+      } else if (isEmi) {
+        cleanMerchant = AiCategorizer.cleanMerchantName(rawNarr);
+        catName = "Loans & Debt";
+        confidence = 0.95;
+        isIncome = false;
+      } else if (isCash) {
+        cleanMerchant = "ATM Cash Withdrawal";
+        catName = "Cash & ATM";
+        confidence = 0.99;
+      } else {
+        cleanMerchant = AiCategorizer.cleanMerchantName(rawNarr);
+        final aiSuggestion = await AiCategorizer.suggestCategory(cleanMerchant,
+            isIncome: isIncome);
+        catName = aiSuggestion.categoryName;
+        confidence = aiSuggestion.confidence;
+      }
 
       entries.add(
         StatementEntry(
@@ -1011,12 +1198,14 @@ Respond ONLY with valid JSON array:
           isIncome: isIncome,
           referenceNo: refNo,
           balance: bal,
-          suggestedCategoryName:
-              isCash ? "Cash & ATM" : aiSuggestion.categoryName,
-          suggestedCategoryPk: aiSuggestion.categoryPk,
-          confidence: isCash ? 0.99 : aiSuggestion.confidence,
+          suggestedCategoryName: catName,
+          suggestedCategoryPk: null,
+          confidence: confidence,
           isCashWithdrawal: isCash,
           isTransferToCash: isCash,
+          isCreditCardInterest: isInterest,
+          isCreditCardGst: isGst,
+          isCreditCardEmi: isEmi,
         ),
       );
     }
