@@ -376,6 +376,7 @@ class SmsParser {
   );
 
   /// Month lookup helper
+  static int monthNumber(String name) => _monthNumber(name);
   static int _monthNumber(String name) {
     final lower = name.toLowerCase();
     const months = {

@@ -7,6 +7,7 @@ import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/smsReview/aiCategorizer.dart';
 import 'package:budget/struct/smsReview/reviewManager.dart';
 import 'package:budget/struct/smsReview/llmClassifier.dart';
+import 'package:budget/struct/smsReview/smsParser.dart';
 import 'package:budget/struct/statementImporter/statementModels.dart';
 import 'package:budget/struct/statementImporter/biff8Parser.dart';
 import 'package:csv/csv.dart';
@@ -146,7 +147,7 @@ class StatementParser {
     return indices;
   }
 
-  /// Parses date string with various common bank formats
+  /// Parses date string with various common bank formats using Review Inbox format rules
   static DateTime? parseFlexibleDate(String rawDate) {
     var clean = rawDate.trim();
     if (clean.isEmpty) return null;
@@ -157,27 +158,97 @@ class StatementParser {
       clean = timeSplit[0];
     }
 
-    // 2. Normalize dots to slashes (e.g. "01.11.2024" -> "01/11/2024")
+    // 2. Format 1 from Review Inbox: DD-MM-YYYY or DD/MM/YYYY or DD-MM-YY or DD/MM/YY or DD.MM.YYYY
+    // e.g. "04-11-26", "04/11/2026", "04-11-2026", "01/10/26"
+    final numericDateRegex = RegExp(
+      r'\b([0-3]?[0-9])[-/.]([0-1]?[0-9])[-/.](20[2-9][0-9]|[2-9][0-9])\b',
+    );
+    final numMatch = numericDateRegex.firstMatch(clean);
+    if (numMatch != null) {
+      int day = int.parse(numMatch.group(1)!);
+      int month = int.parse(numMatch.group(2)!);
+      int year = int.parse(numMatch.group(3)!);
+      if (year < 100) year += 2000;
+      if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+        return DateTime(year, month, day);
+      }
+    }
+
+    // Format 2 from Review Inbox: DD-MMM-YY or DD-MMM-YYYY or DD MMM YYYY or DD-MMM
+    // e.g. "04-Nov-26", "04-Nov-2026", "04 Nov 2026"
+    final alphaDateRegex = RegExp(
+      r'\b([0-3]?[0-9])[-/ ](Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[-/ ]?(20[2-9][0-9]|[2-9][0-9])?\b',
+      caseSensitive: false,
+    );
+    final alphaMatch = alphaDateRegex.firstMatch(clean);
+    if (alphaMatch != null) {
+      int day = int.parse(alphaMatch.group(1)!);
+      int month = SmsParser.monthNumber(alphaMatch.group(2)!);
+      int year = DateTime.now().year;
+      if (alphaMatch.group(3) != null) {
+        year = int.parse(alphaMatch.group(3)!);
+        if (year < 100) year += 2000;
+      }
+      if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+        return DateTime(year, month, day);
+      }
+    }
+
+    // Format 3 from Review Inbox: MMM DD, YYYY or MMM DD, YY e.g. "Nov 04, 2026", "Nov 04, 26"
+    final mmmDdRegex = RegExp(
+      r'\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+([0-3]?[0-9])(?:st|nd|rd|th)?,?\s*(20[2-9][0-9]|[2-9][0-9])?\b',
+      caseSensitive: false,
+    );
+    final mmmDdMatch = mmmDdRegex.firstMatch(clean);
+    if (mmmDdMatch != null) {
+      int month = SmsParser.monthNumber(mmmDdMatch.group(1)!);
+      int day = int.parse(mmmDdMatch.group(2)!);
+      int year = DateTime.now().year;
+      if (mmmDdMatch.group(3) != null) {
+        year = int.parse(mmmDdMatch.group(3)!);
+        if (year < 100) year += 2000;
+      }
+      if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+        return DateTime(year, month, day);
+      }
+    }
+
+    // Format 4 from Review Inbox: ISO YYYY-MM-DD
+    final isoRegex = RegExp(
+      r'\b(20[2-9][0-9])[-/.]([0-1]?[0-9])[-/.]([0-3]?[0-9])\b',
+    );
+    final isoMatch = isoRegex.firstMatch(clean);
+    if (isoMatch != null) {
+      int year = int.parse(isoMatch.group(1)!);
+      int month = int.parse(isoMatch.group(2)!);
+      int day = int.parse(isoMatch.group(3)!);
+      if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+        return DateTime(year, month, day);
+      }
+    }
+
+    // 3. Fallback: Standard DateFormat list with 2-digit year protection (< 100 -> +2000)
     if (clean.contains('.')) {
       clean = clean.replaceAll('.', '/');
     }
 
     final formats = [
+      "dd/MM/yy",
+      "dd-MM-yy",
       "dd/MM/yyyy",
       "dd-MM-yyyy",
       "yyyy-MM-dd",
-      "dd/MM/yy",
-      "dd-MM-yy",
+      "MM/dd/yy",
       "MM/dd/yyyy",
-      "d/M/yyyy",
-      "d-M-yyyy",
       "d/M/yy",
+      "d/M/yyyy",
       "d-M-yy",
+      "d-M-yyyy",
+      "dd-MMM-yy",
+      "dd/MMM/yy",
       "dd-MMM-yyyy",
       "dd MMM yyyy",
       "dd/MMM/yyyy",
-      "dd-MMM-yy",
-      "dd/MMM/yy",
       "yyyy/MM/dd",
       "MMM dd, yyyy",
       "MMMM dd, yyyy",
@@ -185,11 +256,23 @@ class StatementParser {
 
     for (final fmt in formats) {
       try {
-        return DateFormat(fmt, 'en_US').parseLoose(clean);
+        DateTime dt = DateFormat(fmt, 'en_US').parseLoose(clean);
+        if (dt.year < 100) {
+          dt = DateTime(dt.year + 2000, dt.month, dt.day, dt.hour, dt.minute);
+        }
+        return dt;
       } catch (_) {}
     }
 
-    return DateTime.tryParse(clean);
+    final parsed = DateTime.tryParse(clean);
+    if (parsed != null) {
+      if (parsed.year < 100) {
+        return DateTime(parsed.year + 2000, parsed.month, parsed.day);
+      }
+      return parsed;
+    }
+
+    return null;
   }
 
   /// Cleans amount string (e.g. "₹ 1,234.50", "(500.00)", "CR 1,000")
@@ -812,13 +895,35 @@ Respond ONLY with valid JSON array:
       if (e.date.isAfter(maxDate)) maxDate = e.date;
     }
 
-    // Expand search window by 2 days
-    final searchStart = minDate.subtract(const Duration(days: 2));
-    final searchEnd = maxDate.add(const Duration(days: 2));
+    // Expand search window by 3 days for bank settlement differences
+    final searchStart = minDate.subtract(const Duration(days: 3));
+    final searchEnd = maxDate.add(const Duration(days: 3));
 
     // 1. Reconcile against persisted transactions in SQLite database
     final walletTransactions =
         await database.getAllTransactionsFromWallet(walletPk);
+
+    // Auto-heal any legacy transactions previously imported with 2-digit years (< 100)
+    for (int i = 0; i < walletTransactions.length; i++) {
+      final t = walletTransactions[i];
+      if (t.dateCreated.year < 100) {
+        final corrected = DateTime(
+          t.dateCreated.year + 2000,
+          t.dateCreated.month,
+          t.dateCreated.day,
+          t.dateCreated.hour,
+          t.dateCreated.minute,
+        );
+        try {
+          await database.createOrUpdateTransaction(
+            t.copyWith(dateCreated: corrected),
+            insert: false,
+          );
+          walletTransactions[i] = t.copyWith(dateCreated: corrected);
+        } catch (_) {}
+      }
+    }
+
     final existing = walletTransactions
         .where((t) =>
             t.dateCreated.isAfter(searchStart) &&
@@ -829,14 +934,19 @@ Respond ONLY with valid JSON array:
     final pendingSms = ReviewManager.instance.pendingTransactions;
 
     for (final entry in entries) {
+      final entryDateOnly =
+          DateTime(entry.date.year, entry.date.month, entry.date.day);
+
       // Check SQLite DB
       bool matched = false;
       for (final tx in existing) {
-        final diffDays = entry.date.difference(tx.dateCreated).inDays.abs();
+        final txDateOnly = DateTime(
+            tx.dateCreated.year, tx.dateCreated.month, tx.dateCreated.day);
+        final diffDays = entryDateOnly.difference(txDateOnly).inDays.abs();
         final amountMatches = (tx.amount.abs() - entry.amount).abs() < 0.01;
         final typeMatches = (tx.income == entry.isIncome);
 
-        if (diffDays <= 1 && amountMatches && typeMatches) {
+        if (diffDays <= 2 && amountMatches && typeMatches) {
           entry.duplicateState = DuplicateState.confirmedDuplicate;
           entry.matchedSource = 'database';
           entry.isSelected = false; // Deselect already-reconciled items
@@ -850,11 +960,13 @@ Respond ONLY with valid JSON array:
       if (!matched) {
         // Check Review Inbox pending SMS
         for (final item in pendingSms) {
-          final diffDays = entry.date.difference(item.date).inDays.abs();
+          final itemDateOnly =
+              DateTime(item.date.year, item.date.month, item.date.day);
+          final diffDays = entryDateOnly.difference(itemDateOnly).inDays.abs();
           final amountMatches = (item.amount.abs() - entry.amount).abs() < 0.01;
           final typeMatches = (item.isIncome == entry.isIncome);
 
-          if (diffDays <= 1 && amountMatches && typeMatches) {
+          if (diffDays <= 2 && amountMatches && typeMatches) {
             entry.duplicateState = DuplicateState.potentialDuplicate;
             entry.matchedSource = 'review_inbox';
             entry.isSelected = false;
