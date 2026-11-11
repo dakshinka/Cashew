@@ -756,6 +756,17 @@ class SettingsPageContent extends StatelessWidget {
 
         SettingsContainer(
           onTap: () async {
+            await BackupShareManager.purgeOnlyTransactionsWithConfirmation(
+                context);
+          },
+          icon: Icons.delete_sweep_rounded,
+          title: "Purge Transactions Only",
+          description:
+              "Permanently delete all transaction entries while preserving your accounts, categories, budgets, and settings.",
+        ),
+
+        SettingsContainer(
+          onTap: () async {
             await BackupShareManager.wipeAllDataWithDoubleConfirmation(context);
           },
           icon: Icons.delete_forever_rounded,

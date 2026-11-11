@@ -460,14 +460,32 @@ class ReviewManager {
     // Check against existing database transactions
     try {
       final allTxns = await database.allTransactions;
-      final start = effectiveDate!.subtract(const Duration(days: 1));
-      final end = effectiveDate.add(const Duration(days: 1));
-      final alreadyInDb = allTxns.any((t) =>
-          t.dateCreated.isAfter(start) &&
-          t.dateCreated.isBefore(end) &&
-          (t.amount.abs() - reviewItem!.amount.abs()).abs() < 0.01 &&
-          (t.name.toLowerCase() == reviewItem.cleanMerchant.toLowerCase() ||
-              t.note.contains(rawMessage.trim())));
+      final smsDateOnly =
+          DateTime(effectiveDate!.year, effectiveDate.month, effectiveDate.day);
+      final alreadyInDb = allTxns.any((t) {
+        final txDateOnly = DateTime(
+            t.dateCreated.year, t.dateCreated.month, t.dateCreated.day);
+        final diffDays = txDateOnly.difference(smsDateOnly).inDays.abs();
+        if (diffDays > 2) return false;
+
+        final amountMatches =
+            (t.amount.abs() - reviewItem!.amount.abs()).abs() < 0.01;
+        if (!amountMatches) return false;
+
+        final typeMatches = (t.income == reviewItem.isIncome);
+        if (!typeMatches) return false;
+
+        final tName = t.name.toLowerCase();
+        final rName = reviewItem.cleanMerchant.toLowerCase();
+        final nameMatches = tName == rName ||
+            tName.contains(rName) ||
+            rName.contains(tName) ||
+            AiCategorizer.cleanMerchantName(t.name).toLowerCase() == rName;
+
+        final noteMatches = t.note.contains(rawMessage.trim());
+
+        return nameMatches || noteMatches || (diffDays <= 1);
+      });
       if (alreadyInDb) {
         SmsDiagnosticTracker.instance.log(
           sender: sender,
@@ -578,14 +596,32 @@ class ReviewManager {
       // Prevent duplicate insertion if transaction is already in database
       try {
         final allTxns = await database.allTransactions;
-        final start = item.date.subtract(const Duration(days: 1));
-        final end = item.date.add(const Duration(days: 1));
-        final alreadyLogged = allTxns.any((t) =>
-            t.dateCreated.isAfter(start) &&
-            t.dateCreated.isBefore(end) &&
-            (t.amount.abs() - item.amount.abs()).abs() < 0.01 &&
-            (t.name.toLowerCase() == item.cleanMerchant.toLowerCase() ||
-                t.note.contains(item.rawMessage.trim())));
+        final itemDateOnly =
+            DateTime(item.date.year, item.date.month, item.date.day);
+        final alreadyLogged = allTxns.any((t) {
+          final txDateOnly = DateTime(
+              t.dateCreated.year, t.dateCreated.month, t.dateCreated.day);
+          final diffDays = txDateOnly.difference(itemDateOnly).inDays.abs();
+          if (diffDays > 2) return false;
+
+          final amountMatches =
+              (t.amount.abs() - item.amount.abs()).abs() < 0.01;
+          if (!amountMatches) return false;
+
+          final typeMatches = (t.income == item.isIncome);
+          if (!typeMatches) return false;
+
+          final tName = t.name.toLowerCase();
+          final rName = item.cleanMerchant.toLowerCase();
+          final nameMatches = tName == rName ||
+              tName.contains(rName) ||
+              rName.contains(tName) ||
+              AiCategorizer.cleanMerchantName(t.name).toLowerCase() == rName;
+
+          final noteMatches = t.note.contains(item.rawMessage.trim());
+
+          return nameMatches || noteMatches || (diffDays <= 1);
+        });
         if (alreadyLogged) {
           item.status = ReviewStatus.approved;
           await saveToStorage();

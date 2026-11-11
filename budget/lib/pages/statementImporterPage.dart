@@ -10,6 +10,7 @@ import 'package:syncfusion_flutter_pdf/pdf.dart';
 import 'package:budget/colors.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/functions.dart';
+import 'package:budget/struct/backupShare/backupShareManager.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/settings.dart';
 import 'package:budget/struct/statementImporter/statementModels.dart';
@@ -957,7 +958,96 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
           icon: const Icon(Icons.paste_rounded),
           onPressed: _showPasteDialog,
         ),
+        IconButton(
+          tooltip: "Purge Transactions",
+          icon: const Icon(Icons.delete_sweep_rounded),
+          onPressed: () async {
+            final wallet = wallets.firstWhereOrNull(
+                (w) => w.walletPk == _selectedWalletPk);
+            await BackupShareManager.purgeOnlyTransactionsWithConfirmation(
+              context,
+              targetWalletPk: _selectedWalletPk,
+              targetWalletName: wallet?.name,
+            );
+            if (mounted &&
+                _parsedEntries.isNotEmpty &&
+                _selectedWalletPk != null) {
+              await StatementParser.checkDuplicates(
+                  _parsedEntries, _selectedWalletPk!);
+              setState(() {});
+            }
+          },
+        ),
+        if (_parsedEntries.isNotEmpty)
+          IconButton(
+            tooltip: "Import $selectedCount Selected",
+            icon: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                const Icon(Icons.download_done_rounded),
+                if (selectedCount > 0)
+                  Positioned(
+                    right: -4,
+                    top: -4,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 4, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.primary,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      constraints:
+                          const BoxConstraints(minWidth: 14, minHeight: 14),
+                      child: Center(
+                        child: Text(
+                          selectedCount > 99 ? "99+" : "$selectedCount",
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.onPrimary,
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+            onPressed: _commitImport,
+          ),
       ],
+      floatingActionButton: _parsedEntries.isNotEmpty
+          ? Container(
+              margin: const EdgeInsets.only(bottom: 12),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(28),
+                boxShadow: [
+                  BoxShadow(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .primary
+                        .withOpacity(0.35),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: FloatingActionButton.extended(
+                backgroundColor: Theme.of(context).colorScheme.primary,
+                foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                elevation: 4,
+                icon: const Icon(Icons.download_done_rounded),
+                label: TextFont(
+                  text: selectedCount > 0
+                      ? "Import ($selectedCount)"
+                      : "Import (0)",
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  textColor: Theme.of(context).colorScheme.onPrimary,
+                ),
+                onPressed: selectedCount > 0 ? _commitImport : null,
+              ),
+            )
+          : null,
       listWidgets: [
         // Wallet / Account Selector
         Padding(
@@ -1098,23 +1188,40 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                           ],
                         ),
                       ),
-                      TextButton(
-                        onPressed: () {
-                          setState(() {
-                            final anyDeselected =
-                                _parsedEntries.any((e) => !e.isSelected);
-                            for (final e in _parsedEntries) {
-                              e.isSelected = anyDeselected;
-                            }
-                          });
-                        },
-                        child: TextFont(
-                          text: _parsedEntries.every((e) => e.isSelected)
-                              ? "Deselect All"
-                              : "Select All",
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                        ),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          TextButton(
+                            onPressed: () {
+                              setState(() {
+                                final anyDeselected =
+                                    _parsedEntries.any((e) => !e.isSelected);
+                                for (final e in _parsedEntries) {
+                                  e.isSelected = anyDeselected;
+                                }
+                              });
+                            },
+                            child: TextFont(
+                              text: _parsedEntries.every((e) => e.isSelected)
+                                  ? "Deselect All"
+                                  : "Select All",
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Button(
+                            label: "Import ($selectedCount)",
+                            icon: Icons.download_done_rounded,
+                            fontSize: 12,
+                            padding: const EdgeInsetsDirectional.symmetric(
+                                horizontal: 10, vertical: 8),
+                            color: Theme.of(context).colorScheme.primary,
+                            textColor:
+                                Theme.of(context).colorScheme.onPrimary,
+                            onTap: _commitImport,
+                          ),
+                        ],
                       ),
                     ],
                   ),

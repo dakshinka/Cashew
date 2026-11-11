@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Flutter runner for WSL using Windows Flutter SDK via pushd drive mapping
 
-WIN_WSL=$(wslpath -w "$PWD" | sed 's/wsl.localhost/wsl\$/')
+WIN_PATH=$(wslpath -w "$PWD" | sed 's/wsl.localhost/wsl\$/')
+CMD="pushd \"${WIN_PATH}\" && flutter.bat $* && popd"
 
-/mnt/c/Windows/System32/cmd.exe /c "pushd \"${WIN_WSL}\" && flutter.bat $* && popd" < /dev/null
+(cd /mnt/c && /mnt/c/Windows/System32/cmd.exe /c "$CMD")

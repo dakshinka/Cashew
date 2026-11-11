@@ -11,12 +11,10 @@ import 'package:budget/database/tables.dart';
 import 'package:budget/database/initializeDefaultDatabase.dart';
 import 'package:drift/drift.dart' hide Column;
 import 'package:budget/functions.dart';
-import 'package:budget/main.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/localSync/localSyncEngine.dart';
 import 'package:budget/struct/settings.dart';
 import 'package:budget/widgets/accountAndBackup.dart';
-import 'package:budget/widgets/button.dart';
 import 'package:budget/widgets/globalSnackbar.dart';
 import 'package:budget/widgets/navigationFramework.dart';
 import 'package:budget/widgets/openBottomSheet.dart';
@@ -32,7 +30,7 @@ String getCurrentUserIdentifier() {
   if (user != null && user.isNotEmpty) return user;
   final gUser = googleUser?.displayName?.trim();
   if (gUser != null && gUser.isNotEmpty) return gUser;
-  final email = googleUser?.email?.trim();
+  final email = googleUser?.email.trim();
   if (email != null && email.isNotEmpty) return email;
   return "Local User";
 }
@@ -583,6 +581,67 @@ class BackupShareManager {
       openSnackbar(
         SnackbarMessage(
           title: "Error Wiping Data",
+          description: e.toString(),
+          icon: Icons.error_outline,
+        ),
+      );
+    }
+  }
+
+  /// Purges ONLY transaction entries from the database with confirmation,
+  /// preserving all accounts, categories, budgets, and settings.
+  static Future<void> purgeOnlyTransactionsWithConfirmation(
+    BuildContext context, {
+    String? targetWalletPk,
+    String? targetWalletName,
+  }) async {
+    final isSpecificWallet =
+        targetWalletPk != null && targetWalletPk.isNotEmpty;
+    final accountDesc = isSpecificWallet
+        ? "from account '${targetWalletName ?? targetWalletPk}'"
+        : "across ALL accounts";
+
+    final confirm = await openPopup(
+      context,
+      icon: Icons.delete_sweep_rounded,
+      title: "Purge Transactions Only?",
+      description:
+          "This will permanently delete all transaction records $accountDesc.\n\nYour accounts/wallets, categories, budgets, and settings will remain completely intact.\n\nAre you sure you want to proceed?",
+      onCancelLabel: "Cancel",
+      onSubmitLabel: "Purge Transactions",
+      onSubmit: () => popRoute(context, true),
+      onCancel: () => popRoute(context, false),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      int deletedCount = 0;
+      if (isSpecificWallet) {
+        deletedCount = await (database.delete(database.transactions)
+              ..where((t) => t.walletFk.equals(targetWalletPk)))
+            .go();
+      } else {
+        deletedCount = await database.delete(database.transactions).go();
+      }
+
+      if (!context.mounted) return;
+      openSnackbar(
+        SnackbarMessage(
+          title: "Transactions Purged",
+          description:
+              "Removed $deletedCount transaction entries $accountDesc.",
+          icon: Icons.check_circle_outline_rounded,
+        ),
+      );
+
+      // Refresh home and navigation state
+      homePageStateKey.currentState?.refreshState();
+    } catch (e) {
+      if (!context.mounted) return;
+      openSnackbar(
+        SnackbarMessage(
+          title: "Error Purging Transactions",
           description: e.toString(),
           icon: Icons.error_outline,
         ),
