@@ -114,8 +114,16 @@ class _CreditCardTrackerPageState extends State<CreditCardTrackerPage> {
                   contentPadding: EdgeInsets.zero,
                   title: const TextFont(
                     text: "Track Credit Card & Finance Fees",
-                    fontSize: 15,
+                    fontSize: 14.5,
                     fontWeight: FontWeight.bold,
+                    maxLines: 2,
+                  ),
+                  subtitle: TextFont(
+                    text:
+                        "Enables billing cycle dates, grace period check, interest accrual, and credit limit tracking.",
+                    fontSize: 11.5,
+                    textColor: getColor(context, "textLight"),
+                    maxLines: 3,
                   ),
                   value: enabled,
                   onChanged: (val) {
