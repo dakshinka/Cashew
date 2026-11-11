@@ -1,3 +1,4 @@
+import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:budget/colors.dart';
@@ -43,7 +44,12 @@ class _CreditCardTrackerPageState extends State<CreditCardTrackerPage> {
     );
   }
 
-  void _showConfigureCardDialog() {
+  void _showConfigureCardDialog() async {
+    final allWallets = await database.getAllWallets();
+    final candidateParents = allWallets
+        .where((w) => w.walletPk != widget.wallet.walletPk)
+        .toList();
+
     final limitController =
         TextEditingController(text: _config.creditLimit.toStringAsFixed(0));
     final cycleDayController =
@@ -57,12 +63,15 @@ class _CreditCardTrackerPageState extends State<CreditCardTrackerPage> {
     final taxController =
         TextEditingController(text: _config.taxRate.toString());
     bool enabled = _config.isEnabled;
+    String? selectedParentPk = _config.sharedParentWalletPk;
+
+    if (!mounted) return;
 
     openPopup(
       context,
       title: "Credit Card Billing Settings",
       description:
-          "Configure billing cycle, grace period, and interest rates for this card:",
+          "Configure billing cycle, grace period, interest rates, and shared credit limits:",
       onSubmitLabel: "Save Settings",
       onSubmit: () async {
         _config.creditLimit =
@@ -78,6 +87,15 @@ class _CreditCardTrackerPageState extends State<CreditCardTrackerPage> {
         _config.taxRate =
             double.tryParse(taxController.text.trim()) ?? 18.0;
         _config.isEnabled = enabled;
+        _config.sharedParentWalletPk = selectedParentPk;
+
+        if (selectedParentPk != null) {
+          final parentCfg =
+              CreditCardManager.instance.getConfig(selectedParentPk!);
+          if (parentCfg.isEnabled) {
+            _config.creditLimit = parentCfg.creditLimit;
+          }
+        }
 
         await CreditCardManager.instance.saveConfig(_config);
         setState(() {});
@@ -87,6 +105,7 @@ class _CreditCardTrackerPageState extends State<CreditCardTrackerPage> {
       onCancel: () => popRoute(context),
       beforeDescriptionWidget: StatefulBuilder(
         builder: (context, setDialogState) {
+          final theme = Theme.of(context);
           return SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -106,8 +125,106 @@ class _CreditCardTrackerPageState extends State<CreditCardTrackerPage> {
                   },
                 ),
                 const SizedBox(height: 10),
+
+                // Shared Credit Limit Pool selector
+                TextFont(
+                  text: "Shared Credit Limit",
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  textColor: getColor(context, "textLight"),
+                ),
+                const SizedBox(height: 5),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surfaceVariant.withOpacity(0.4),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color:
+                          theme.colorScheme.outlineVariant.withOpacity(0.5),
+                    ),
+                  ),
+                  child: DropdownButtonHideUnderline(
+                    child: DropdownButton<String?>(
+                      isExpanded: true,
+                      value: selectedParentPk,
+                      items: [
+                        const DropdownMenuItem<String?>(
+                          value: null,
+                          child: TextFont(
+                            text: "Independent Credit Limit (Not Linked)",
+                            fontSize: 13,
+                          ),
+                        ),
+                        ...candidateParents.map((w) {
+                          return DropdownMenuItem<String?>(
+                            value: w.walletPk,
+                            child: Row(
+                              children: [
+                                const Icon(Icons.link_rounded,
+                                    size: 16, color: Colors.blue),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: TextFont(
+                                    text: "Share Limit with ${w.name}",
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                      ],
+                      onChanged: (val) {
+                        setDialogState(() {
+                          selectedParentPk = val;
+                          if (val != null) {
+                            final parentCfg = CreditCardManager.instance
+                                .getConfig(val);
+                            limitController.text =
+                                parentCfg.creditLimit.toStringAsFixed(0);
+                          }
+                        });
+                      },
+                    ),
+                  ),
+                ),
+                if (selectedParentPk != null) ...[
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.blue.withOpacity(0.3)),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.info_outline_rounded,
+                            size: 16, color: Colors.blue.shade800),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: TextFont(
+                            text:
+                                "Linked card: Total credit limit & available balance are shared with ${candidateParents.firstWhereOrNull((w) => w.walletPk == selectedParentPk)?.name ?? 'Primary Card'}. Combined utilization will be tracked together.",
+                            fontSize: 11,
+                            textColor: Colors.blue.shade900,
+                            maxLines: 3,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 12),
+
                 TextInput(
-                  labelText: "Credit Limit",
+                  labelText: selectedParentPk != null
+                      ? "Shared Credit Limit (Managed by Primary Card)"
+                      : "Credit Limit",
                   controller: limitController,
                   numbersOnly: true,
                   padding: const EdgeInsetsDirectional.only(bottom: 10),
@@ -272,6 +389,216 @@ class _CreditCardTrackerPageState extends State<CreditCardTrackerPage> {
                   ],
                 ),
               ),
+            ),
+
+            // Shared Credit Limit Pool Card (if this card shares limits with other cards)
+            FutureBuilder<CreditCardCombinedSummary?>(
+              future: CreditCardManager.instance
+                  .getCombinedSummary(widget.wallet.walletPk),
+              builder: (context, poolSnapshot) {
+                final pool = poolSnapshot.data;
+                if (pool == null || !pool.isSharedPool) {
+                  return const SizedBox.shrink();
+                }
+
+                final utilPercent = pool.combinedUtilizationPercent;
+                final utilColor = utilPercent < 30.0
+                    ? Colors.green.shade600
+                    : (utilPercent < 70.0
+                        ? Colors.amber.shade700
+                        : Colors.red.shade700);
+
+                return Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.withOpacity(0.06),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(
+                        color: Colors.blue.withOpacity(0.3),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(Icons.link_rounded,
+                                    size: 18, color: Colors.blue.shade800),
+                                const SizedBox(width: 6),
+                                TextFont(
+                                  text: "Shared Credit Limit Pool",
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                  textColor: Colors.blue.shade900,
+                                ),
+                              ],
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 7, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: utilColor.withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: TextFont(
+                                text:
+                                    "${utilPercent.toStringAsFixed(1)}% Pool Utilized",
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.bold,
+                                textColor: utilColor,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+
+                        // Progress Bar
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(4),
+                          child: LinearProgressIndicator(
+                            value: (utilPercent / 100.0).clamp(0.0, 1.0),
+                            backgroundColor: Colors.grey.withOpacity(0.2),
+                            valueColor:
+                                AlwaysStoppedAnimation<Color>(utilColor),
+                            minHeight: 6,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                TextFont(
+                                  text: "Combined Outstanding",
+                                  fontSize: 11,
+                                  textColor: getColor(context, "textLight"),
+                                ),
+                                const SizedBox(height: 2),
+                                TextFont(
+                                  text: getCurrencyString(
+                                      pool.totalCombinedOutstanding),
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ],
+                            ),
+                            Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                TextFont(
+                                  text: "Shared Available Limit",
+                                  fontSize: 11,
+                                  textColor: getColor(context, "textLight"),
+                                ),
+                                const SizedBox(height: 2),
+                                TextFont(
+                                  text:
+                                      "${getCurrencyString(pool.totalSharedAvailableCredit)} / ${getCurrencyString(pool.sharedCreditLimit)}",
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                  textColor: Colors.blue.shade900,
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                        const Divider(height: 20),
+
+                        TextFont(
+                          text: "Cards in this Shared Pool:",
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.bold,
+                          textColor: getColor(context, "textLight"),
+                        ),
+                        const SizedBox(height: 6),
+                        ...pool.members.map((m) {
+                          final isCurrent =
+                              m.wallet.walletPk == widget.wallet.walletPk;
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 3),
+                            child: Row(
+                              mainAxisAlignment:
+                                  MainAxisAlignment.spaceBetween,
+                              children: [
+                                Row(
+                                  children: [
+                                    Icon(
+                                      m.isPrimary
+                                          ? Icons.credit_card_rounded
+                                          : Icons.add_card_rounded,
+                                      size: 15,
+                                      color: isCurrent
+                                          ? theme.colorScheme.primary
+                                          : Colors.grey,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    TextFont(
+                                      text: m.wallet.name,
+                                      fontSize: 12,
+                                      fontWeight: isCurrent
+                                          ? FontWeight.bold
+                                          : FontWeight.normal,
+                                    ),
+                                    if (isCurrent) ...[
+                                      const SizedBox(width: 4),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 4, vertical: 1),
+                                        decoration: BoxDecoration(
+                                          color: theme.colorScheme.primary
+                                              .withOpacity(0.12),
+                                          borderRadius:
+                                              BorderRadius.circular(4),
+                                        ),
+                                        child: TextFont(
+                                          text: "This Card",
+                                          fontSize: 9,
+                                          textColor:
+                                              theme.colorScheme.primary,
+                                        ),
+                                      ),
+                                    ] else if (m.isPrimary) ...[
+                                      const SizedBox(width: 4),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 4, vertical: 1),
+                                        decoration: BoxDecoration(
+                                          color: Colors.blue.withOpacity(0.12),
+                                          borderRadius:
+                                              BorderRadius.circular(4),
+                                        ),
+                                        child: TextFont(
+                                          text: "Primary",
+                                          fontSize: 9,
+                                          textColor: Colors.blue.shade800,
+                                        ),
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                                TextFont(
+                                  text: getCurrencyString(m.currentBalance),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                      ],
+                    ),
+                  ),
+                );
+              },
             ),
 
             // Live Daily Accrual & Balance Card

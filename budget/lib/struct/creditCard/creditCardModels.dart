@@ -10,6 +10,7 @@ class CreditCardConfig {
   double minimumDuePercent; // e.g. 5.0 (5%)
   double taxRate; // e.g. 18.0 (18% GST on finance charges)
   bool isEnabled;
+  String? sharedParentWalletPk; // If set, this card shares its limit with the primary card
 
   CreditCardConfig({
     required this.walletPk,
@@ -20,7 +21,11 @@ class CreditCardConfig {
     this.minimumDuePercent = 5.0,
     this.taxRate = 18.0,
     this.isEnabled = false,
+    this.sharedParentWalletPk,
   });
+
+  bool get isSharedLimit =>
+      sharedParentWalletPk != null && sharedParentWalletPk!.isNotEmpty;
 
   double get apr => monthlyInterestRate * 12.0;
 
@@ -59,6 +64,7 @@ class CreditCardConfig {
         'minimumDuePercent': minimumDuePercent,
         'taxRate': taxRate,
         'isEnabled': isEnabled,
+        'sharedParentWalletPk': sharedParentWalletPk,
       };
 
   factory CreditCardConfig.fromJson(Map<String, dynamic> json) =>
@@ -73,6 +79,7 @@ class CreditCardConfig {
             (json['minimumDuePercent'] as num?)?.toDouble() ?? 5.0,
         taxRate: (json['taxRate'] as num?)?.toDouble() ?? 18.0,
         isEnabled: (json['isEnabled'] as bool?) ?? false,
+        sharedParentWalletPk: json['sharedParentWalletPk'] as String?,
       );
 }
 
@@ -226,4 +233,38 @@ class CreditCardAnalysisResult {
       itemizedEntries: itemized,
     );
   }
+}
+
+class CreditCardMemberInfo {
+  final TransactionWallet wallet;
+  final double currentBalance;
+  final bool isPrimary;
+  final CreditCardConfig config;
+
+  CreditCardMemberInfo({
+    required this.wallet,
+    required this.currentBalance,
+    required this.isPrimary,
+    required this.config,
+  });
+}
+
+class CreditCardCombinedSummary {
+  final TransactionWallet primaryWallet;
+  final List<CreditCardMemberInfo> members;
+  final bool isSharedPool;
+  final double sharedCreditLimit;
+  final double totalCombinedOutstanding;
+  final double totalSharedAvailableCredit;
+  final double combinedUtilizationPercent;
+
+  CreditCardCombinedSummary({
+    required this.primaryWallet,
+    required this.members,
+    required this.isSharedPool,
+    required this.sharedCreditLimit,
+    required this.totalCombinedOutstanding,
+    required this.totalSharedAvailableCredit,
+    required this.combinedUtilizationPercent,
+  });
 }

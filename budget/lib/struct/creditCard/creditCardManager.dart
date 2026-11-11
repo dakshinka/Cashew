@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:budget/main.dart';
 import 'package:budget/database/tables.dart';
@@ -46,6 +47,143 @@ class CreditCardManager extends ChangeNotifier {
       jsonEncode(config.toJson()),
     );
     notifyListeners();
+  }
+
+  /// Returns the effective primary card walletPk.
+  /// If the card is linked to a parent card, returns that parent's walletPk.
+  String getEffectivePrimaryWalletPk(String walletPk) {
+    final cfg = getConfig(walletPk);
+    if (cfg.isSharedLimit && cfg.sharedParentWalletPk != walletPk) {
+      return cfg.sharedParentWalletPk!;
+    }
+    return walletPk;
+  }
+
+  /// Checks if a wallet is part of a shared credit limit pool (either primary or linked child)
+  bool isWalletInSharedPool(String walletPk) {
+    final cfg = getConfig(walletPk);
+    if (cfg.isSharedLimit) return true;
+    for (final k in sharedPreferences.getKeys()) {
+      if (k.startsWith(_storagePrefix)) {
+        final val = sharedPreferences.getString(k);
+        if (val != null && val.contains('"sharedParentWalletPk":"$walletPk"')) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  /// Calculates outstanding card balance (spends minus payments)
+  static double calculateWalletBalance(List<Transaction> transactions) {
+    double totalSpends = 0.0;
+    double totalRepayments = 0.0;
+    for (final t in transactions) {
+      if (!t.paid) continue;
+      if (t.income == false) {
+        totalSpends += t.amount.abs();
+      } else {
+        totalRepayments += t.amount.abs();
+      }
+    }
+    return (totalSpends - totalRepayments).clamp(0.0, double.infinity);
+  }
+
+  /// Computes the combined multi-card summary across a shared pool (Primary + Linked Cards)
+  Future<CreditCardCombinedSummary?> getCombinedSummary(
+    String walletPk, {
+    List<TransactionWallet>? allWallets,
+  }) async {
+    final wallets = allWallets ?? await database.getAllWallets();
+    final primaryPk = getEffectivePrimaryWalletPk(walletPk);
+    final primaryWallet =
+        wallets.firstWhereOrNull((w) => w.walletPk == primaryPk);
+    if (primaryWallet == null) return null;
+
+    final primaryConfig = getConfig(primaryPk);
+
+    // Find all child cards linked to this primary card
+    final List<TransactionWallet> linkedWallets = [];
+    for (final w in wallets) {
+      if (w.walletPk == primaryPk) continue;
+      final cfg = getConfig(w.walletPk);
+      if (cfg.sharedParentWalletPk == primaryPk && cfg.isEnabled) {
+        linkedWallets.add(w);
+      }
+    }
+
+    final bool isShared =
+        linkedWallets.isNotEmpty || (getConfig(walletPk).isSharedLimit);
+    final double sharedLimit = primaryConfig.creditLimit;
+
+    // Fetch transactions and calculate balances
+    final List<CreditCardMemberInfo> members = [];
+    double totalCombinedSpent = 0.0;
+
+    // 1. Primary Card
+    final primaryTxns =
+        await database.getAllTransactionsFromWallet(primaryPk);
+    final primaryBal = calculateWalletBalance(primaryTxns);
+    totalCombinedSpent += primaryBal;
+    members.add(CreditCardMemberInfo(
+      wallet: primaryWallet,
+      currentBalance: primaryBal,
+      isPrimary: true,
+      config: primaryConfig,
+    ));
+
+    // 2. Linked Cards
+    for (final lw in linkedWallets) {
+      final txns = await database.getAllTransactionsFromWallet(lw.walletPk);
+      final bal = calculateWalletBalance(txns);
+      totalCombinedSpent += bal;
+      members.add(CreditCardMemberInfo(
+        wallet: lw,
+        currentBalance: bal,
+        isPrimary: false,
+        config: getConfig(lw.walletPk),
+      ));
+    }
+
+    final avail = (sharedLimit - totalCombinedSpent).clamp(0.0, sharedLimit);
+    final util =
+        sharedLimit > 0 ? (totalCombinedSpent / sharedLimit) * 100.0 : 0.0;
+
+    return CreditCardCombinedSummary(
+      primaryWallet: primaryWallet,
+      members: members,
+      isSharedPool: isShared,
+      sharedCreditLimit: sharedLimit,
+      totalCombinedOutstanding: totalCombinedSpent,
+      totalSharedAvailableCredit: avail,
+      combinedUtilizationPercent: util,
+    );
+  }
+
+  /// Returns all active shared pools across all configured credit cards
+  Future<List<CreditCardCombinedSummary>> getAllSharedPools({
+    List<TransactionWallet>? allWallets,
+  }) async {
+    final wallets = allWallets ?? await database.getAllWallets();
+    final List<CreditCardCombinedSummary> pools = [];
+    final Set<String> processedPrimaryPks = {};
+
+    for (final w in wallets) {
+      final cfg = getConfig(w.walletPk);
+      if (!cfg.isEnabled) continue;
+
+      final primaryPk = getEffectivePrimaryWalletPk(w.walletPk);
+      if (processedPrimaryPks.contains(primaryPk)) continue;
+      processedPrimaryPks.add(primaryPk);
+
+      final summary =
+          await getCombinedSummary(primaryPk, allWallets: wallets);
+      if (summary != null && summary.isSharedPool) {
+        pools.add(summary);
+      }
+    }
+
+    return pools;
   }
 
   /// Simulates payoff timeline and interest cost under different payment scenarios

@@ -20,6 +20,7 @@ import 'package:budget/pages/walletDetailsPage.dart';
 import 'package:budget/colors.dart';
 import 'package:provider/provider.dart';
 import 'package:budget/widgets/countNumber.dart';
+import 'package:budget/struct/creditCard/creditCardManager.dart';
 
 class WalletEntry extends StatelessWidget {
   const WalletEntry(
@@ -107,6 +108,34 @@ class WalletEntry extends StatelessWidget {
                             textColor:
                                 getColor(context, "black").withOpacity(0.65),
                           ),
+                          if (CreditCardManager.instance.isWalletInSharedPool(
+                              walletWithDetails.wallet.walletPk))
+                            Padding(
+                              padding:
+                                  const EdgeInsetsDirectional.only(top: 3),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 5, vertical: 1.5),
+                                decoration: BoxDecoration(
+                                  color: Colors.blue.withOpacity(0.12),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(Icons.link_rounded,
+                                        size: 11, color: Colors.blue.shade800),
+                                    const SizedBox(width: 3),
+                                    TextFont(
+                                      text: "Shared Limit Pool",
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
+                                      textColor: Colors.blue.shade800,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
                         ],
                       ),
                     ),

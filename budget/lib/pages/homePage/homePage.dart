@@ -37,6 +37,7 @@ import 'package:budget/widgets/slidingSelectorIncomeExpense.dart';
 import 'package:budget/widgets/linearGradientFadedEdges.dart';
 import 'package:budget/widgets/pullDownToRefreshSync.dart';
 import 'package:budget/widgets/homeSmsSyncButton.dart';
+import 'package:budget/widgets/creditCardWidget.dart';
 import 'package:budget/widgets/util/rightSideClipper.dart';
 import 'package:flutter/services.dart';
 import 'package:budget/widgets/util/checkWidgetLaunch.dart';
@@ -294,6 +295,7 @@ class HomePageState extends State<HomePage> with TickerProviderStateMixin {
                         height: 1,
                         color: Theme.of(context).colorScheme.background),
                     const HomePendingTransactionsBanner(),
+                    const HomeCreditCardSharedPoolBanner(),
 
                     showWelcomeBanner
                         ? ConstrainedBox(
