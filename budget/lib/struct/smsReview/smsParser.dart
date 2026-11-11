@@ -945,7 +945,10 @@ class SmsParser {
     final parsed = parse(rawMessage);
 
     final cleanTitle = AiCategorizer.cleanMerchantName(parsed.rawMerchant);
-    final aiSuggestion = await AiCategorizer.suggestCategory(cleanTitle, isIncome: parsed.isIncome);
+    final aiSuggestion = await AiCategorizer.categorize(
+      rawTitle: parsed.rawMerchant.isNotEmpty ? parsed.rawMerchant : cleanTitle,
+      isIncome: parsed.isIncome,
+    );
 
     return ReviewTransaction(
       rawMessage: rawMessage,
@@ -957,6 +960,8 @@ class SmsParser {
       isIncome: parsed.isIncome,
       suggestedCategoryName: aiSuggestion.categoryName,
       suggestedCategoryPk: aiSuggestion.categoryPk,
+      suggestedSubCategoryName: aiSuggestion.subCategoryName,
+      suggestedSubCategoryPk: aiSuggestion.subCategoryPk,
       confidence: aiSuggestion.confidence,
       accountHint: parsed.accountHint,
       isReminder: parsed.isReminder,

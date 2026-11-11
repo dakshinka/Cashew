@@ -1,22 +1,36 @@
+import 'package:collection/collection.dart';
 import 'package:budget/struct/databaseGlobal.dart';
+import 'package:budget/struct/categoryManagerHelper.dart';
+import 'package:budget/struct/smsReview/llmClassifier.dart';
 
 class AiCategorySuggestion {
   final String categoryName;
   final String? categoryPk;
   final String cleanMerchant;
   final double confidence;
+  final String? subCategoryName;
+  final String? subCategoryPk;
 
   AiCategorySuggestion({
     required this.categoryName,
     this.categoryPk,
     required this.cleanMerchant,
     required this.confidence,
+    this.subCategoryName,
+    this.subCategoryPk,
   });
 }
 
 class AiCategorizer {
   // Common knowledge base for financial merchant classification
   static final Map<String, List<String>> _categoryKeywords = {
+    "Financial & Bank Fees": [
+      "finance charge", "finance charges", "offus em int", "offus em prin",
+      "offus", "em int", "em prin", "interest charge", "interest charges", "fc @",
+      "cgst", "sgst", "igst", "gst on charges", "gst on finance",
+      "annual fee", "late payment fee", "card fee", "overlimit fee",
+      "forex markup", "processing fee", "smart emi", "merchant emi"
+    ],
     "Food & Dining": [
       "swiggy", "zomato", "mcdonald", "starbucks", "burger king", "kfc",
       "domino", "pizza", "subway", "chaayos", "cafe coffee day", "dunkin",
@@ -136,6 +150,18 @@ class AiCategorizer {
       );
       if (associated.isNotEmpty) {
         final cat = associated.first.category;
+        if (cat.mainCategoryPk != null) {
+          final mainCat =
+              await database.getCategoryInstance(cat.mainCategoryPk!);
+          return AiCategorySuggestion(
+            categoryName: mainCat.name,
+            categoryPk: mainCat.categoryPk,
+            subCategoryName: cat.name,
+            subCategoryPk: cat.categoryPk,
+            cleanMerchant: clean,
+            confidence: 0.99,
+          );
+        }
         return AiCategorySuggestion(
           categoryName: cat.name,
           categoryPk: cat.categoryPk,
@@ -145,7 +171,48 @@ class AiCategorizer {
       }
     } catch (_) {}
 
-    // 2. Income Check
+    // 2. Financial & Bank Fees check (Credit card interest, offus em int, em prin, cgst, sgst, fees)
+    if (CategoryManagerHelper.isFinancialOrCardCharge(rawTitle) ||
+        CategoryManagerHelper.isFinancialOrCardCharge(clean)) {
+      final subCatName = CategoryManagerHelper.getRecommendedSubCategoryName(
+          rawTitle.isNotEmpty ? rawTitle : clean);
+      final userCategories = await database.getAllCategories();
+      final mainCat = userCategories.firstWhereOrNull(
+        (c) =>
+            c.mainCategoryPk == null &&
+            (c.name.toLowerCase() ==
+                    CategoryManagerHelper.financialMainCategory.toLowerCase() ||
+                c.name.toLowerCase().contains("financial") ||
+                c.name.toLowerCase().contains("bank fee") ||
+                c.name.toLowerCase() == "bills & fees"),
+      );
+
+      String? mainPk;
+      String? subPk;
+      if (mainCat != null) {
+        mainPk = mainCat.categoryPk;
+        final subCat = userCategories.firstWhereOrNull(
+          (c) =>
+              c.mainCategoryPk == mainCat.categoryPk &&
+              c.name.toLowerCase() == subCatName.toLowerCase(),
+        );
+        if (subCat != null) {
+          subPk = subCat.categoryPk;
+        }
+      }
+
+      return AiCategorySuggestion(
+        categoryName:
+            mainCat?.name ?? CategoryManagerHelper.financialMainCategory,
+        categoryPk: mainPk,
+        subCategoryName: subCatName,
+        subCategoryPk: subPk,
+        cleanMerchant: clean,
+        confidence: 0.98,
+      );
+    }
+
+    // 3. Income Check
     if (isIncome) {
       final userCategories = await database.getAllCategories();
       final incomeCat = userCategories.firstWhere(
@@ -160,7 +227,7 @@ class AiCategorizer {
       );
     }
 
-    // 3. Match against Knowledge Base
+    // 4. Match against Knowledge Base
     String matchedCategoryGroup = "Other";
     double highestConfidence = 0.60;
 
@@ -175,17 +242,69 @@ class AiCategorizer {
       if (highestConfidence > 0.8) break;
     }
 
-    // 4. Map matched group to user's actual database category
+    // 5. Try LLM classification if knowledge base matched "Other"
+    if (matchedCategoryGroup == "Other") {
+      try {
+        final userCategories = await database.getAllCategories();
+        final llmResult = await LlmClassifier.classifyCategoryWithLlm(
+          merchant: clean,
+          categories: userCategories,
+        );
+        if (llmResult != null) {
+          final matchedPk = llmResult["matchedCategoryPk"]?.toString();
+          final matchedSubPk = llmResult["matchedSubCategoryPk"]?.toString();
+          final proposedName = llmResult["proposedCategoryName"]?.toString();
+          final proposedSub =
+              llmResult["proposedSubCategoryName"]?.toString();
+
+          if (matchedPk != null &&
+              matchedPk.isNotEmpty &&
+              matchedPk != "null") {
+            final cat = userCategories.firstWhereOrNull(
+              (c) => c.categoryPk == matchedPk,
+            );
+            if (cat != null) {
+              final sub = matchedSubPk != null && matchedSubPk != "null"
+                  ? userCategories.firstWhereOrNull(
+                      (c) => c.categoryPk == matchedSubPk,
+                    )
+                  : null;
+              return AiCategorySuggestion(
+                categoryName: cat.name,
+                categoryPk: cat.categoryPk,
+                subCategoryName: sub?.name,
+                subCategoryPk: sub?.categoryPk,
+                cleanMerchant: clean,
+                confidence: 0.92,
+              );
+            }
+          } else if (proposedName != null &&
+              proposedName.isNotEmpty &&
+              proposedName != "null") {
+            return AiCategorySuggestion(
+              categoryName: proposedName,
+              categoryPk: null,
+              subCategoryName: proposedSub,
+              subCategoryPk: null,
+              cleanMerchant: clean,
+              confidence: 0.88,
+            );
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 6. Map matched group to user's actual database category
     String? matchedCategoryPk;
     try {
       final userCategories = await database.getAllCategories();
-      // Try exact name match
-      final exact = userCategories.where((c) =>
-          c.name.toLowerCase() == matchedCategoryGroup.toLowerCase()).toList();
+      final exact = userCategories
+          .where((c) =>
+              c.name.toLowerCase() == matchedCategoryGroup.toLowerCase())
+          .toList();
       if (exact.isNotEmpty) {
         matchedCategoryPk = exact.first.categoryPk;
       } else {
-        // Try fuzzy keyword match on category names
         for (final c in userCategories) {
           final cName = c.name.toLowerCase();
           if (matchedCategoryGroup.toLowerCase().contains(cName) ||
@@ -195,7 +314,15 @@ class AiCategorizer {
           }
         }
       }
-      matchedCategoryPk ??= userCategories.isNotEmpty ? userCategories.first.categoryPk : null;
+      // Never default to userCategories.first ("Home")! Only default if "Other" category exists.
+      if (matchedCategoryPk == null) {
+        final otherCat = userCategories.firstWhereOrNull(
+          (c) =>
+              c.name.toLowerCase() == "other" ||
+              c.name.toLowerCase() == "miscellaneous",
+        );
+        matchedCategoryPk = otherCat?.categoryPk;
+      }
     } catch (_) {}
 
     return AiCategorySuggestion(

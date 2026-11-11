@@ -20,6 +20,8 @@ class ReviewTransaction {
   bool isIncome;
   String suggestedCategoryName;
   String? suggestedCategoryPk;
+  String? suggestedSubCategoryName;
+  String? suggestedSubCategoryPk;
   double confidence;
   String? accountHint;
   String? suggestedWalletPk;
@@ -44,6 +46,8 @@ class ReviewTransaction {
     required this.isIncome,
     required this.suggestedCategoryName,
     this.suggestedCategoryPk,
+    this.suggestedSubCategoryName,
+    this.suggestedSubCategoryPk,
     this.confidence = 0.85,
     this.accountHint,
     this.suggestedWalletPk,
@@ -65,6 +69,8 @@ class ReviewTransaction {
         'isIncome': isIncome,
         'suggestedCategoryName': suggestedCategoryName,
         'suggestedCategoryPk': suggestedCategoryPk,
+        'suggestedSubCategoryName': suggestedSubCategoryName,
+        'suggestedSubCategoryPk': suggestedSubCategoryPk,
         'confidence': confidence,
         'accountHint': accountHint,
         'suggestedWalletPk': suggestedWalletPk,
@@ -89,6 +95,8 @@ class ReviewTransaction {
         suggestedCategoryName:
             json['suggestedCategoryName'] as String? ?? "Other",
         suggestedCategoryPk: json['suggestedCategoryPk'] as String?,
+        suggestedSubCategoryName: json['suggestedSubCategoryName'] as String?,
+        suggestedSubCategoryPk: json['suggestedSubCategoryPk'] as String?,
         confidence: (json['confidence'] as num?)?.toDouble() ?? 0.8,
         accountHint: json['accountHint'] as String?,
         suggestedWalletPk: json['suggestedWalletPk'] as String?,

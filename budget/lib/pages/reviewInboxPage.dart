@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:collection/collection.dart';
 import 'package:notification_listener_service/notification_listener_service.dart';
 import 'package:provider/provider.dart';
 import 'package:budget/colors.dart';
@@ -8,6 +9,7 @@ import 'package:budget/functions.dart';
 import 'package:budget/pages/addTransactionPage.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/settings.dart';
+import 'package:budget/struct/categoryManagerHelper.dart';
 import 'package:budget/struct/smsReview/reviewManager.dart';
 import 'package:budget/struct/smsReview/reviewModels.dart';
 import 'package:budget/struct/smsReview/smsInboxScanner.dart';
@@ -2303,54 +2305,61 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
     );
   }
 
-  void _showCategoryTagPicker(ReviewTransaction item) {
-    openBottomSheet(
+  void _showCategoryTagPicker(ReviewTransaction item) async {
+    final allCategories = await database.getAllCategories();
+    TransactionCategory? currentCategory = item.suggestedCategoryPk != null
+        ? allCategories
+            .firstWhereOrNull((c) => c.categoryPk == item.suggestedCategoryPk)
+        : allCategories.firstWhereOrNull((c) =>
+            c.name.toLowerCase() == item.suggestedCategoryName.toLowerCase());
+
+    TransactionCategory? currentSubCategory =
+        item.suggestedSubCategoryPk != null
+            ? allCategories.firstWhereOrNull(
+                (c) => c.categoryPk == item.suggestedSubCategoryPk)
+            : null;
+
+    final mainAndSub = await selectCategorySequence(
       context,
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(
-                  Icons.label_outline_rounded,
-                  color: Theme.of(context).colorScheme.primary,
-                  size: 24,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: TextFont(
-                    text: "Tag Category for ${item.cleanMerchant}",
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            TextFont(
-              text:
-                  "Choose a category. You can set it to remember and tag all transactions from ${item.cleanMerchant}.",
-              fontSize: 12,
-              textColor: getColor(context, "textLight"),
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              height: 320,
-              child: SelectCategory(
-                popRoute: true,
-                setSelectedCategory: (TransactionCategory? cat) {
-                  if (cat == null) return;
-                  _promptApplyEverywhere(item, cat);
-                },
-              ),
-            ),
-          ],
-        ),
-      ),
+      selectedCategory: currentCategory,
+      setSelectedCategory: (cat) {},
+      selectedSubCategory: currentSubCategory,
+      setSelectedSubCategory: (sub) {},
+      selectedIncomeInitial: item.isIncome,
     );
+
+    if (mainAndSub.main == null) return;
+
+    final newMainCat = mainAndSub.main!;
+    final newSubCat = mainAndSub.sub;
+
+    final bool applyToAll = await CategoryManagerHelper.propagateCategoryChange(
+      context,
+      merchantTitle: item.cleanMerchant,
+      newCategoryPk: newMainCat.categoryPk,
+      newSubCategoryPk: newSubCat?.categoryPk,
+      newCategoryName: newMainCat.name,
+      newSubCategoryName: newSubCat?.name,
+    );
+
+    if (applyToAll) {
+      await ReviewManager.instance.updateCategoryForMerchant(
+        merchant: item.cleanMerchant,
+        categoryName: newMainCat.name,
+        categoryPk: newMainCat.categoryPk,
+        subCategoryName: newSubCat?.name,
+        subCategoryPk: newSubCat?.categoryPk,
+        applyEverywhere: true,
+      );
+    } else {
+      item.suggestedCategoryName = newMainCat.name;
+      item.suggestedCategoryPk = newMainCat.categoryPk;
+      item.suggestedSubCategoryName = newSubCat?.name;
+      item.suggestedSubCategoryPk = newSubCat?.categoryPk;
+      item.confidence = 1.0;
+      await ReviewManager.instance.saveToStorage();
+    }
+    setState(() {});
   }
 
   void _promptApplyEverywhere(ReviewTransaction item, TransactionCategory cat) {
@@ -3000,7 +3009,10 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
                           ),
                           const SizedBox(width: 4),
                           TextFont(
-                            text: item.suggestedCategoryName,
+                            text: item.suggestedSubCategoryName != null &&
+                                    item.suggestedSubCategoryName!.isNotEmpty
+                                ? "${item.suggestedCategoryName} • ${item.suggestedSubCategoryName}"
+                                : item.suggestedCategoryName,
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
                             textColor: Theme.of(context).colorScheme.primary,

@@ -302,6 +302,69 @@ Output ONLY the rule text to append to the system prompt.
     return null;
   }
 
+  /// Asks LLM to classify a merchant into the user's existing categories/subcategories,
+  /// or propose a suitable new category and subcategory if none match.
+  static Future<Map<String, dynamic>?> classifyCategoryWithLlm({
+    required String merchant,
+    required List<dynamic> categories,
+  }) async {
+    try {
+      final categoryTree = <Map<String, dynamic>>[];
+      for (final main in categories.where((c) => c.mainCategoryPk == null)) {
+        final subs = categories
+            .where((c) => c.mainCategoryPk == main.categoryPk)
+            .map((c) => {"id": c.categoryPk, "name": c.name})
+            .toList();
+        categoryTree.add({
+          "id": main.categoryPk,
+          "name": main.name,
+          "subcategories": subs,
+        });
+      }
+
+      final prompt = '''
+You are an expert financial transaction categorization assistant.
+Classify the following merchant/transaction narration into the most appropriate category and subcategory from the user's available categories list, OR propose a new category and subcategory if none fit well.
+
+Merchant: "$merchant"
+
+Available Categories & Subcategories:
+${jsonEncode(categoryTree)}
+
+Special instructions:
+1. If the narration is for card finance charges, interest, EMI, banking charges, or GST/taxes, select or propose "Financial & Bank Fees" and appropriate subcategory ("Credit Card Interest", "EMI Principal", "Taxes & GST", or "Card & Bank Charges").
+2. Match to existing category "id" and "subcategories" "id" whenever an existing category or subcategory is a good fit.
+3. If no existing category fits well, set matchedCategoryPk and matchedSubCategoryPk to null, and provide "proposedCategoryName" and "proposedSubCategoryName".
+
+Output ONLY valid JSON:
+{
+  "matchedCategoryPk": string or null,
+  "matchedSubCategoryPk": string or null,
+  "proposedCategoryName": string or null,
+  "proposedSubCategoryName": string or null,
+  "reasoning": string
+}
+''';
+
+      final responseStr = await queryActiveLlm(prompt);
+      if (responseStr == null || responseStr.trim().isEmpty) return null;
+
+      String jsonStr = responseStr.trim();
+      final startIndex = jsonStr.indexOf('{');
+      final endIndex = jsonStr.lastIndexOf('}');
+      if (startIndex != -1 && endIndex != -1 && endIndex > startIndex) {
+        jsonStr = jsonStr.substring(startIndex, endIndex + 1);
+        final decoded = jsonDecode(jsonStr);
+        if (decoded is Map<String, dynamic>) {
+          return decoded;
+        }
+      }
+    } catch (e) {
+      debugPrint("classifyCategoryWithLlm error: $e");
+    }
+    return null;
+  }
+
   /// Synthesizes an offline regex pattern from an SMS that required AI classification,
   /// storing it locally so all future messages of this bank format run 100% offline at 0 AI cost.
   static Future<bool> synthesizeAndStoreRegexPattern(

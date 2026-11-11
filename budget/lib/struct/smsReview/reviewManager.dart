@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:collection/collection.dart';
 import 'package:uuid/uuid.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/struct/databaseGlobal.dart';
@@ -12,6 +13,8 @@ import 'package:budget/struct/smsReview/llmClassifier.dart';
 import 'package:budget/struct/smsReview/smsDiagnosticTracker.dart';
 import 'package:budget/struct/backupShare/backupShareManager.dart';
 import 'package:budget/struct/statementImporter/statementParser.dart';
+import 'package:budget/struct/categoryManagerHelper.dart';
+import 'package:budget/widgets/navigationFramework.dart';
 
 const _uuid = Uuid();
 const String _kReviewInboxStorageKey = "cached_review_transactions_v1";
@@ -549,7 +552,9 @@ class ReviewManager {
 
   /// Approve a single transaction and commit to Cashew DB
   Future<bool> approve(ReviewTransaction item,
-      {String? customWalletPk, String? customCategoryPk}) async {
+      {String? customWalletPk,
+      String? customCategoryPk,
+      String? customSubCategoryPk}) async {
     try {
       // Determine wallet: ensure dedicated account for Bank, Card, or Cash without dumping into default!
       String walletPk = customWalletPk ?? item.suggestedWalletPk ?? "";
@@ -587,12 +592,40 @@ class ReviewManager {
         }
       }
 
-      // Determine category
+      // Determine category and subcategory
       String categoryPk = customCategoryPk ?? item.suggestedCategoryPk ?? "";
+      String? subCategoryPk = customSubCategoryPk ?? item.suggestedSubCategoryPk;
+
       if (categoryPk.isEmpty) {
         final categories = await database.getAllCategories();
-        if (categories.isNotEmpty) {
-          categoryPk = categories.first.categoryPk;
+        if (CategoryManagerHelper.isFinancialOrCardCharge(item.rawMessage) ||
+            CategoryManagerHelper.isFinancialOrCardCharge(item.cleanMerchant)) {
+          final context = navigatorKey.currentContext;
+          if (context != null) {
+            final ensured = await CategoryManagerHelper.ensureFinancialCategoriesExist(
+              context,
+              askConfirmation: false,
+            );
+            if (ensured != null) {
+              categoryPk = ensured['main']!.categoryPk;
+              final subName = CategoryManagerHelper.getRecommendedSubCategoryName(
+                  item.rawMessage.isNotEmpty ? item.rawMessage : item.cleanMerchant);
+              if (subName == CategoryManagerHelper.subCatInterest) {
+                subCategoryPk = ensured['interest']?.categoryPk;
+              } else if (subName == CategoryManagerHelper.subCatEmi) {
+                subCategoryPk = ensured['emi']?.categoryPk;
+              } else if (subName == CategoryManagerHelper.subCatTaxes) {
+                subCategoryPk = ensured['taxes']?.categoryPk;
+              } else {
+                subCategoryPk = ensured['charges']?.categoryPk;
+              }
+            }
+          }
+        }
+        if (categoryPk.isEmpty && categories.isNotEmpty) {
+          final found = categories.firstWhereOrNull((c) =>
+              c.name.toLowerCase() == item.suggestedCategoryName.toLowerCase());
+          categoryPk = found?.categoryPk ?? categories.first.categoryPk;
         }
       }
 
@@ -655,6 +688,7 @@ class ReviewManager {
         amount: finalAmount,
         note: note,
         categoryFk: categoryPk,
+        subCategoryFk: subCategoryPk,
         walletFk: walletPk,
         dateCreated: item.date,
         income: item.isIncome,
@@ -697,6 +731,8 @@ class ReviewManager {
     required String merchant,
     required String categoryName,
     required String? categoryPk,
+    String? subCategoryName,
+    String? subCategoryPk,
     bool applyEverywhere = true,
   }) async {
     for (final item in _items) {
@@ -705,6 +741,8 @@ class ReviewManager {
               item.extractedTitle.toLowerCase() == merchant.toLowerCase())) {
         item.suggestedCategoryName = categoryName;
         item.suggestedCategoryPk = categoryPk;
+        item.suggestedSubCategoryName = subCategoryName;
+        item.suggestedSubCategoryPk = subCategoryPk;
         item.confidence = 1.0;
       }
     }

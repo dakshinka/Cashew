@@ -19,6 +19,8 @@ class StatementEntry {
   double? balance;
   String suggestedCategoryName;
   String? suggestedCategoryPk;
+  String? suggestedSubCategoryName;
+  String? suggestedSubCategoryPk;
   double confidence;
   bool isSelected;
   DuplicateState duplicateState;
@@ -47,6 +49,8 @@ class StatementEntry {
     this.balance,
     required this.suggestedCategoryName,
     this.suggestedCategoryPk,
+    this.suggestedSubCategoryName,
+    this.suggestedSubCategoryPk,
     this.confidence = 0.85,
     this.isSelected = true,
     this.duplicateState = DuplicateState.unique,

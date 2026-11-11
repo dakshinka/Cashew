@@ -16,6 +16,8 @@ import 'package:budget/struct/settings.dart';
 import 'package:budget/struct/statementImporter/statementModels.dart';
 import 'package:budget/struct/statementImporter/statementParser.dart';
 import 'package:budget/struct/creditCard/creditCardManager.dart';
+import 'package:budget/struct/categoryManagerHelper.dart';
+import 'package:budget/pages/addTransactionPage.dart';
 import 'package:budget/widgets/button.dart';
 import 'package:budget/widgets/framework/pageFramework.dart';
 import 'package:budget/widgets/navigationFramework.dart';
@@ -499,16 +501,23 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
       (w) => w.name.toLowerCase().contains("cash"),
     );
 
-    String selectedCatPk = entry.suggestedCategoryPk ??
-        allCategories
-            .firstWhereOrNull((c) => c.name == entry.suggestedCategoryName)
-            ?.categoryPk ??
+    TransactionCategory? selectedCategory = allCategories.firstWhereOrNull(
+      (c) =>
+          c.categoryPk == entry.suggestedCategoryPk ||
+          (c.mainCategoryPk == null &&
+              c.name.toLowerCase() == entry.suggestedCategoryName.toLowerCase()),
+    );
+    TransactionCategory? selectedSubCategory = entry.suggestedSubCategoryPk != null
+        ? allCategories.firstWhereOrNull((c) => c.categoryPk == entry.suggestedSubCategoryPk)
+        : null;
+
+    String selectedCatPk = selectedCategory?.categoryPk ??
+        entry.suggestedCategoryPk ??
         allCategories.firstOrNull?.categoryPk ??
         "";
-    String selectedCatName = allCategories
-            .firstWhereOrNull((c) => c.categoryPk == selectedCatPk)
-            ?.name ??
-        entry.suggestedCategoryName;
+    String selectedCatName = selectedCategory?.name ?? entry.suggestedCategoryName;
+    String? selectedSubCatPk = selectedSubCategory?.categoryPk ?? entry.suggestedSubCategoryPk;
+    String? selectedSubCatName = selectedSubCategory?.name ?? entry.suggestedSubCategoryName;
 
     final otherWallets =
         allWallets.list.where((w) => w.walletPk != _selectedWalletPk).toList();
@@ -757,49 +766,150 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                   ),
                   const SizedBox(height: 12),
 
-                  // Category Picker Row
+                  // Category & Subcategory Picker Row
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       const TextFont(
-                        text: "Category",
+                        text: "Category & Subcategory",
                         fontSize: 13,
                         fontWeight: FontWeight.bold,
                       ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Theme.of(context)
-                              .colorScheme
-                              .primary
-                              .withOpacity(0.12),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.category_rounded,
-                                size: 14,
-                                color: Theme.of(context).colorScheme.primary),
-                            const SizedBox(width: 4),
-                            TextFont(
-                              text: selectedCatName,
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                              textColor: Theme.of(context).colorScheme.primary,
+                      InkWell(
+                        onTap: () async {
+                          final mainAndSub = await selectCategorySequence(
+                            sheetContext,
+                            selectedCategory: selectedCategory,
+                            setSelectedCategory: (cat) {
+                              selectedCategory = cat;
+                            },
+                            selectedSubCategory: selectedSubCategory,
+                            setSelectedSubCategory: (sub) {
+                              selectedSubCategory = sub;
+                            },
+                            selectedIncomeInitial: isIncome,
+                          );
+                          setSheetState(() {
+                            if (mainAndSub.main != null) {
+                              selectedCategory = mainAndSub.main;
+                              selectedSubCategory = mainAndSub.sub;
+                              selectedCatPk = mainAndSub.main!.categoryPk;
+                              selectedCatName = mainAndSub.main!.name;
+                              selectedSubCatPk = mainAndSub.sub?.categoryPk;
+                              selectedSubCatName = mainAndSub.sub?.name;
+                            }
+                          });
+                        },
+                        borderRadius: BorderRadius.circular(8),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .primary
+                                .withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .primary
+                                  .withOpacity(0.3),
                             ),
-                          ],
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.category_rounded,
+                                  size: 14,
+                                  color: Theme.of(context).colorScheme.primary),
+                              const SizedBox(width: 6),
+                              TextFont(
+                                text: selectedSubCatName != null &&
+                                        selectedSubCatName!.isNotEmpty
+                                    ? "$selectedCatName • $selectedSubCatName"
+                                    : selectedCatName,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                textColor: Theme.of(context).colorScheme.primary,
+                              ),
+                              const SizedBox(width: 4),
+                              Icon(Icons.edit_outlined,
+                                  size: 12,
+                                  color: Theme.of(context).colorScheme.primary),
+                            ],
+                          ),
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 6),
+                  const SizedBox(height: 8),
+
+                  // Recommended fee types for credit card and bank charges
+                  if (CategoryManagerHelper.isFinancialOrCardCharge(entry.rawNarration)) ...[
+                    const TextFont(
+                      text: "Recommended Fee Type:",
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      children: [
+                        CategoryManagerHelper.subCatInterest,
+                        CategoryManagerHelper.subCatEmi,
+                        CategoryManagerHelper.subCatTaxes,
+                        CategoryManagerHelper.subCatBankCharges,
+                      ].map((subName) {
+                        final isSel = selectedSubCatName == subName;
+                        return ChoiceChip(
+                          label: TextFont(
+                            text: subName,
+                            fontSize: 10,
+                            fontWeight: isSel ? FontWeight.bold : FontWeight.normal,
+                          ),
+                          selected: isSel,
+                          onSelected: (_) async {
+                            final ensured = await CategoryManagerHelper.ensureFinancialCategoriesExist(
+                              context,
+                              askConfirmation: false,
+                            );
+                            if (ensured != null) {
+                              setSheetState(() {
+                                selectedCatPk = ensured['main']!.categoryPk;
+                                selectedCatName = ensured['main']!.name;
+                                selectedCategory = ensured['main'];
+                                TransactionCategory? targetSub;
+                                if (subName == CategoryManagerHelper.subCatInterest) {
+                                  targetSub = ensured['interest'];
+                                } else if (subName == CategoryManagerHelper.subCatEmi) {
+                                  targetSub = ensured['emi'];
+                                } else if (subName == CategoryManagerHelper.subCatTaxes) {
+                                  targetSub = ensured['taxes'];
+                                } else {
+                                  targetSub = ensured['charges'];
+                                }
+                                selectedSubCategory = targetSub;
+                                selectedSubCatPk = targetSub?.categoryPk;
+                                selectedSubCatName = targetSub?.name;
+                              });
+                            }
+                          },
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+
                   // Quick category chips
                   Wrap(
                     spacing: 6,
                     runSpacing: 4,
-                    children: allCategories.take(10).map((cat) {
+                    children: allCategories
+                        .where((c) => c.mainCategoryPk == null)
+                        .take(8)
+                        .map((cat) {
                       final isSelected = cat.categoryPk == selectedCatPk;
                       return ChoiceChip(
                         label: TextFont(
@@ -811,8 +921,12 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                         selected: isSelected,
                         onSelected: (_) {
                           setSheetState(() {
+                            selectedCategory = cat;
                             selectedCatPk = cat.categoryPk;
                             selectedCatName = cat.name;
+                            selectedSubCategory = null;
+                            selectedSubCatPk = null;
+                            selectedSubCatName = null;
                           });
                         },
                       );
@@ -845,15 +959,67 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                           icon: Icons.check_circle_rounded,
                           color: Theme.of(context).colorScheme.primary,
                           textColor: Theme.of(context).colorScheme.onPrimary,
-                          onTap: () {
+                          onTap: () async {
+                            final newMerchant =
+                                merchantController.text.trim().isEmpty
+                                    ? entry.cleanMerchant
+                                    : merchantController.text.trim();
+                            final newAmt =
+                                double.tryParse(amountController.text.trim()) ??
+                                    entry.amount;
+
+                            final origCatPk = entry.suggestedCategoryPk ?? "";
+                            final origSubCatPk = entry.suggestedSubCategoryPk;
+                            final bool catChanged = (selectedCatPk != origCatPk ||
+                                selectedSubCatPk != origSubCatPk);
+
+                            if (catChanged && !isTransfer) {
+                              Navigator.of(context).pop();
+                              final applyEverywhere =
+                                  await CategoryManagerHelper.propagateCategoryChange(
+                                context,
+                                merchantTitle: newMerchant,
+                                newCategoryPk: selectedCatPk,
+                                newSubCategoryPk: selectedSubCatPk,
+                                newCategoryName: selectedCatName,
+                                newSubCategoryName: selectedSubCatName,
+                              );
+
+                              if (applyEverywhere) {
+                                final cleanTarget = newMerchant.toLowerCase().trim();
+                                for (final item in _parsedEntries) {
+                                  final itemClean = item.cleanMerchant.toLowerCase().trim();
+                                  if (itemClean == cleanTarget ||
+                                      itemClean.contains(cleanTarget) ||
+                                      cleanTarget.contains(itemClean)) {
+                                    item.suggestedCategoryPk = selectedCatPk;
+                                    item.suggestedCategoryName = selectedCatName;
+                                    item.suggestedSubCategoryPk = selectedSubCatPk;
+                                    item.suggestedSubCategoryName = selectedSubCatName;
+                                    item.isUserReviewed = true;
+                                  }
+                                }
+                              }
+
+                              setState(() {
+                                entry.cleanMerchant = newMerchant;
+                                entry.amount = newAmt;
+                                entry.isIncome = isIncome;
+                                entry.destinationWalletPk = null;
+                                entry.isTransferToCash = false;
+                                entry.suggestedCategoryPk = selectedCatPk;
+                                entry.suggestedCategoryName = selectedCatName;
+                                entry.suggestedSubCategoryPk = selectedSubCatPk;
+                                entry.suggestedSubCategoryName = selectedSubCatName;
+                                entry.isUserReviewed = true;
+                                entry.isSelected = true;
+                              });
+                              return;
+                            }
+
                             setState(() {
-                              entry.cleanMerchant =
-                                  merchantController.text.trim().isEmpty
-                                      ? entry.cleanMerchant
-                                      : merchantController.text.trim();
-                              entry.amount =
-                                  double.tryParse(amountController.text.trim()) ??
-                                      entry.amount;
+                              entry.cleanMerchant = newMerchant;
+                              entry.amount = newAmt;
                               entry.isIncome = isIncome;
                               entry.destinationWalletPk =
                                   isTransfer ? targetWalletPk : null;
@@ -867,6 +1033,10 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                                   isTransfer ? "0" : selectedCatPk;
                               entry.suggestedCategoryName =
                                   isTransfer ? "Transfer" : selectedCatName;
+                              entry.suggestedSubCategoryPk =
+                                  isTransfer ? null : selectedSubCatPk;
+                              entry.suggestedSubCategoryName =
+                                  isTransfer ? null : selectedSubCatName;
                               entry.isUserReviewed = true;
                               entry.isSelected = true;
                             });
@@ -923,7 +1093,8 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
           walletPk: walletPk);
 
       final allWallets = Provider.of<AllWallets>(context, listen: false);
-      final defaultCat = (await database.getAllCategories()).firstOrNull;
+      final allCategories = await database.getAllCategories();
+      final defaultCat = allCategories.firstOrNull;
 
       // 1. Fetch existing transactions to guarantee pre-insertion deduplication
       final existingTxns =
@@ -980,6 +1151,21 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
           ),
         );
         return;
+      }
+
+      // Check if financial charges exist (interest, EMI, taxes, fees)
+      final hasFinancial = verifiedToImport.any((e) =>
+          e.isCreditCardInterest ||
+          e.isCreditCardGst ||
+          e.isCreditCardEmi ||
+          CategoryManagerHelper.isFinancialOrCardCharge(e.rawNarration));
+
+      Map<String, TransactionCategory>? financialCategories;
+      if (hasFinancial) {
+        financialCategories = await CategoryManagerHelper.ensureFinancialCategoriesExist(
+          context,
+          askConfirmation: true,
+        );
       }
 
       int count = 0;
@@ -1066,8 +1252,36 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
           // 2. Standard Transaction
           final amount =
               entry.isIncome ? entry.amount.abs() : -entry.amount.abs();
-          final catPk =
-              entry.suggestedCategoryPk ?? defaultCat?.categoryPk ?? "";
+
+          String catPk = entry.suggestedCategoryPk ?? "";
+          String? subCatPk = entry.suggestedSubCategoryPk;
+
+          // If financial category was created/ensured and this is a bank/card charge
+          if (financialCategories != null &&
+              (catPk.isEmpty || catPk == defaultCat?.categoryPk) &&
+              (entry.isCreditCardInterest ||
+                  entry.isCreditCardGst ||
+                  entry.isCreditCardEmi ||
+                  CategoryManagerHelper.isFinancialOrCardCharge(entry.rawNarration))) {
+            catPk = financialCategories['main']!.categoryPk;
+            final subName = CategoryManagerHelper.getRecommendedSubCategoryName(entry.rawNarration);
+            if (subName == CategoryManagerHelper.subCatInterest) {
+              subCatPk = financialCategories['interest']?.categoryPk;
+            } else if (subName == CategoryManagerHelper.subCatEmi) {
+              subCatPk = financialCategories['emi']?.categoryPk;
+            } else if (subName == CategoryManagerHelper.subCatTaxes) {
+              subCatPk = financialCategories['taxes']?.categoryPk;
+            } else {
+              subCatPk = financialCategories['charges']?.categoryPk;
+            }
+          }
+
+          if (catPk.isEmpty) {
+            final found = allCategories.firstWhereOrNull(
+              (c) => c.name.toLowerCase() == entry.suggestedCategoryName.toLowerCase(),
+            );
+            catPk = found?.categoryPk ?? defaultCat?.categoryPk ?? "";
+          }
 
           final refId = StatementParser.extractReferenceId(entry.rawNarration,
               explicitRef: entry.referenceNo);
@@ -1086,6 +1300,7 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
             amount: amount,
             note: note,
             categoryFk: catPk,
+            subCategoryFk: subCatPk,
             walletFk: entry.destinationWalletPk ?? walletPk,
             dateCreated: entry.date,
             income: entry.isIncome,
@@ -2152,7 +2367,10 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                                     ),
                                     const SizedBox(width: 4),
                                     TextFont(
-                                      text: entry.suggestedCategoryName,
+                                      text: entry.suggestedSubCategoryName != null &&
+                                              entry.suggestedSubCategoryName!.isNotEmpty
+                                          ? "${entry.suggestedCategoryName} • ${entry.suggestedSubCategoryName}"
+                                          : entry.suggestedCategoryName,
                                       fontSize: 11,
                                       fontWeight: FontWeight.w600,
                                       textColor: Theme.of(context)

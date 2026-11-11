@@ -13,6 +13,7 @@ import 'package:budget/pages/settingsPage.dart';
 import 'package:budget/pages/sharedBudgetSettings.dart';
 import 'package:budget/pages/transactionsListPage.dart';
 import 'package:budget/struct/databaseGlobal.dart';
+import 'package:budget/struct/categoryManagerHelper.dart';
 import 'package:budget/struct/navBarIconsData.dart';
 import 'package:budget/struct/settings.dart';
 import 'package:budget/struct/upcomingTransactionsFunctions.dart';
@@ -550,6 +551,32 @@ class _AddTransactionPageState extends State<AddTransactionPage>
               onSubmitLabel: "update-both".tr(),
             );
           }
+        }
+      }
+
+      if (widget.transaction != null) {
+        final oldCatPk = widget.transaction!.categoryFk;
+        final oldSubCatPk = widget.transaction!.subCategoryFk;
+        final newCatPk = createdTransaction.categoryFk;
+        final newSubCatPk = createdTransaction.subCategoryFk;
+        final merchantName = createdTransaction.name.trim();
+
+        if (newCatPk != "0" &&
+            merchantName.isNotEmpty &&
+            (newCatPk != oldCatPk || newSubCatPk != oldSubCatPk)) {
+          final newCat = await database.getCategoryInstance(newCatPk);
+          final newSub = newSubCatPk != null
+              ? await database.getCategoryInstanceOrNull(newSubCatPk)
+              : null;
+
+          await CategoryManagerHelper.propagateCategoryChange(
+            context,
+            merchantTitle: merchantName,
+            newCategoryPk: newCatPk,
+            newSubCategoryPk: newSubCatPk,
+            newCategoryName: newCat.name,
+            newSubCategoryName: newSub?.name,
+          );
         }
       }
 

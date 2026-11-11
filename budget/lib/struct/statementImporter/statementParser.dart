@@ -909,32 +909,29 @@ class StatementParser {
 
       String cleanMerchant;
       String catName;
+      String? catPk;
+      String? subCatName;
+      String? subCatPk;
       double confidence;
 
-      if (isInterest) {
-        cleanMerchant = "Finance Charges / Interest";
-        catName = "Bank Charges & Fees";
-        confidence = 0.99;
-        isIncome = false;
-      } else if (isGst) {
-        cleanMerchant = "GST on Finance Charges";
-        catName = "Taxes & Fees";
-        confidence = 0.99;
-        isIncome = false;
-      } else if (isEmi) {
-        cleanMerchant = AiCategorizer.cleanMerchantName(narr);
-        catName = "Loans & Debt";
-        confidence = 0.95;
-        isIncome = false;
-      } else if (isCash) {
+      if (isCash) {
         cleanMerchant = "ATM Cash Withdrawal";
         catName = "Cash & ATM";
         confidence = 0.99;
       } else {
-        cleanMerchant = AiCategorizer.cleanMerchantName(narr);
-        final aiSuggestion = await AiCategorizer.suggestCategory(cleanMerchant,
-            isIncome: isIncome);
+        cleanMerchant = isInterest
+            ? "Finance Charges / Interest"
+            : (isGst
+                ? "GST on Finance Charges"
+                : AiCategorizer.cleanMerchantName(narr));
+        final aiSuggestion = await AiCategorizer.categorize(
+          rawTitle: narr,
+          isIncome: isIncome,
+        );
         catName = aiSuggestion.categoryName;
+        catPk = aiSuggestion.categoryPk;
+        subCatName = aiSuggestion.subCategoryName;
+        subCatPk = aiSuggestion.subCategoryPk;
         confidence = aiSuggestion.confidence;
       }
 
@@ -948,7 +945,9 @@ class StatementParser {
           referenceNo: explicitRef,
           balance: balance,
           suggestedCategoryName: catName,
-          suggestedCategoryPk: null,
+          suggestedCategoryPk: catPk,
+          suggestedSubCategoryName: subCatName,
+          suggestedSubCategoryPk: subCatPk,
           confidence: confidence,
           isCashWithdrawal: isCash,
           isTransferToCash: isCash,
@@ -1029,9 +1028,10 @@ Respond ONLY with valid JSON array:
             if (amt <= 0) continue;
 
             final cleanMerchant = AiCategorizer.cleanMerchantName(desc);
-            final aiSuggestion = await AiCategorizer.suggestCategory(
-                cleanMerchant,
-                isIncome: isIncome);
+            final aiSuggestion = await AiCategorizer.categorize(
+              rawTitle: desc.isNotEmpty ? desc : cleanMerchant,
+              isIncome: isIncome,
+            );
 
             entries.add(
               StatementEntry(
@@ -1042,6 +1042,8 @@ Respond ONLY with valid JSON array:
                 isIncome: isIncome,
                 suggestedCategoryName: aiSuggestion.categoryName,
                 suggestedCategoryPk: aiSuggestion.categoryPk,
+                suggestedSubCategoryName: aiSuggestion.subCategoryName,
+                suggestedSubCategoryPk: aiSuggestion.subCategoryPk,
                 confidence: aiSuggestion.confidence,
               ),
             );
@@ -1160,32 +1162,29 @@ Respond ONLY with valid JSON array:
 
       String cleanMerchant;
       String catName;
+      String? catPk;
+      String? subCatName;
+      String? subCatPk;
       double confidence;
 
-      if (isInterest) {
-        cleanMerchant = "Finance Charges / Interest";
-        catName = "Bank Charges & Fees";
-        confidence = 0.99;
-        isIncome = false;
-      } else if (isGst) {
-        cleanMerchant = "GST on Finance Charges";
-        catName = "Taxes & Fees";
-        confidence = 0.99;
-        isIncome = false;
-      } else if (isEmi) {
-        cleanMerchant = AiCategorizer.cleanMerchantName(rawNarr);
-        catName = "Loans & Debt";
-        confidence = 0.95;
-        isIncome = false;
-      } else if (isCash) {
+      if (isCash) {
         cleanMerchant = "ATM Cash Withdrawal";
         catName = "Cash & ATM";
         confidence = 0.99;
       } else {
-        cleanMerchant = AiCategorizer.cleanMerchantName(rawNarr);
-        final aiSuggestion = await AiCategorizer.suggestCategory(cleanMerchant,
-            isIncome: isIncome);
+        cleanMerchant = isInterest
+            ? "Finance Charges / Interest"
+            : (isGst
+                ? "GST on Finance Charges"
+                : AiCategorizer.cleanMerchantName(rawNarr));
+        final aiSuggestion = await AiCategorizer.categorize(
+          rawTitle: rawNarr,
+          isIncome: isIncome,
+        );
         catName = aiSuggestion.categoryName;
+        catPk = aiSuggestion.categoryPk;
+        subCatName = aiSuggestion.subCategoryName;
+        subCatPk = aiSuggestion.subCategoryPk;
         confidence = aiSuggestion.confidence;
       }
 
@@ -1199,7 +1198,9 @@ Respond ONLY with valid JSON array:
           referenceNo: refNo,
           balance: bal,
           suggestedCategoryName: catName,
-          suggestedCategoryPk: null,
+          suggestedCategoryPk: catPk,
+          suggestedSubCategoryName: subCatName,
+          suggestedSubCategoryPk: subCatPk,
           confidence: confidence,
           isCashWithdrawal: isCash,
           isTransferToCash: isCash,
