@@ -32,6 +32,7 @@ import 'package:notification_listener_service/notification_listener_service.dart
 
 import 'addButton.dart';
 import 'package:budget/struct/smsReview/reviewManager.dart';
+import 'package:budget/struct/smsReview/smsAutoRefreshService.dart';
 import 'package:budget/pages/reviewInboxPage.dart';
 
 StreamSubscription<ServiceNotificationEvent>? notificationListenerSubscription;
@@ -81,6 +82,7 @@ class _InitializeNotificationServiceState
     super.initState();
     Future.delayed(Duration.zero, () async {
       initNotificationScanning();
+      await SmsAutoRefreshService.instance.init();
     });
   }
 

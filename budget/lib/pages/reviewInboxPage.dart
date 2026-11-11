@@ -13,6 +13,7 @@ import 'package:budget/struct/categoryManagerHelper.dart';
 import 'package:budget/struct/smsReview/reviewManager.dart';
 import 'package:budget/struct/smsReview/reviewModels.dart';
 import 'package:budget/struct/smsReview/smsInboxScanner.dart';
+import 'package:budget/struct/smsReview/smsAutoRefreshService.dart';
 import 'package:budget/struct/smsReview/llmClassifier.dart';
 import 'package:budget/struct/smsReview/smsDiagnosticTracker.dart';
 import 'package:budget/pages/smsInspectorPage.dart';
@@ -35,6 +36,11 @@ class ReviewInboxPage extends StatefulWidget {
       _ReviewInboxPageState.showAiModelSettingsDialog(context,
           onSaved: onSaved);
 
+  static void showAutoRefreshSettingsDialog(BuildContext context,
+          {VoidCallback? onSaved}) =>
+      _ReviewInboxPageState.showAutoRefreshSettingsDialog(context,
+          onSaved: onSaved);
+
   static void showEditAiPromptDialog(BuildContext context) =>
       _ReviewInboxPageState.showEditAiPromptDialog(context);
 
@@ -55,6 +61,26 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
       if (mounted) setState(() {});
     });
     _checkNotificationPermission();
+
+    // Auto-scan incremental incoming SMS on opening inbox
+    if (appStateSettings["autoSmsScanEnabled"] == true) {
+      SmsAutoRefreshService.instance.scanIncremental(silent: true).then((_) {
+        if (mounted) setState(() {});
+      });
+    }
+
+    // Listen to real-time additions to update UI immediately
+    ReviewManager.instance.pendingCountNotifier.addListener(_onPendingCountChanged);
+  }
+
+  void _onPendingCountChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    ReviewManager.instance.pendingCountNotifier.removeListener(_onPendingCountChanged);
+    super.dispose();
   }
 
   Future<void> _checkNotificationPermission() async {
@@ -74,6 +100,292 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
     showAiModelSettingsDialog(context, onSaved: () {
       if (mounted) setState(() {});
     });
+  }
+
+  void _showAutoRefreshSettingsDialog() {
+    showAutoRefreshSettingsDialog(context, onSaved: () {
+      if (mounted) setState(() {});
+    });
+  }
+
+  static void showAutoRefreshSettingsDialog(BuildContext context,
+      {VoidCallback? onSaved}) async {
+    bool autoSyncEnabled = appStateSettings["autoSmsScanEnabled"] == true;
+    int intervalMinutes =
+        appStateSettings["autoSmsScanIntervalMinutes"] as int? ?? 15;
+    bool syncOnResume = appStateSettings["autoSmsScanOnAppResume"] == true;
+    bool hasSmsPerm = await SmsInboxScanner.hasPermission();
+    bool hasNotifPerm = false;
+    if (getPlatform(ignoreEmulation: true) == PlatformOS.isAndroid) {
+      try {
+        hasNotifPerm = await NotificationListenerService.isPermissionGranted();
+      } catch (_) {}
+    }
+
+    await openBottomSheet(
+      context,
+      StatefulBuilder(
+        builder: (bottomSheetContext, setModalState) {
+          final lastScan = SmsAutoRefreshService.instance.lastScanTime.value;
+          String lastScanStr = "Never";
+          if (lastScan != null) {
+            final diff = DateTime.now().difference(lastScan);
+            if (diff.inSeconds < 60) {
+              lastScanStr = "Just now";
+            } else if (diff.inMinutes < 60) {
+              lastScanStr = "${diff.inMinutes}m ago";
+            } else if (diff.inHours < 24) {
+              lastScanStr = "${diff.inHours}h ago";
+            } else {
+              lastScanStr = DateFormat("dd MMM, hh:mm a").format(lastScan);
+            }
+          }
+
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.sync_rounded,
+                              size: 24,
+                              color: Theme.of(context).colorScheme.primary),
+                          const SizedBox(width: 8),
+                          const TextFont(
+                            text: "SMS Auto-Review & Refresh",
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ],
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.of(bottomSheetContext).pop(),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  TextFont(
+                    text:
+                        "Automate transaction tracking so you never need to manually scan your SMS inbox again.",
+                    fontSize: 12,
+                    textColor: getColor(context, "textLight"),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // 1. Enable Auto-Sync Switch
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: getColor(context, "canvasContainer"),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const TextFont(
+                                text: "Automatic SMS Sync",
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              const SizedBox(height: 2),
+                              TextFont(
+                                text:
+                                    "Continuously monitor and pull bank & UPI transactions in the background.",
+                                fontSize: 11,
+                                textColor: getColor(context, "textLight"),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Switch(
+                          value: autoSyncEnabled,
+                          activeColor: Theme.of(context).colorScheme.primary,
+                          onChanged: (val) async {
+                            if (val && !hasSmsPerm) {
+                              final granted =
+                                  await SmsInboxScanner.requestPermission();
+                              if (!granted) return;
+                              hasSmsPerm = true;
+                            }
+                            setModalState(() => autoSyncEnabled = val);
+                            await updateSettings("autoSmsScanEnabled", val,
+                                updateGlobalState: true);
+                            SmsAutoRefreshService.instance.restartTimer();
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // 2. Interval Selection
+                  if (autoSyncEnabled) ...[
+                    const TextFont(
+                      text: "Refresh Interval:",
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        {'label': '5 min', 'val': 5},
+                        {'label': '15 min (Recommended)', 'val': 15},
+                        {'label': '30 min', 'val': 30},
+                        {'label': '1 hour', 'val': 60},
+                        {'label': 'On App Open Only', 'val': -1},
+                      ].map((opt) {
+                        final isSel = intervalMinutes == opt['val'];
+                        return ChoiceChip(
+                          label: TextFont(
+                            text: opt['label'] as String,
+                            fontSize: 11,
+                            fontWeight:
+                                isSel ? FontWeight.bold : FontWeight.normal,
+                          ),
+                          selected: isSel,
+                          onSelected: (selected) async {
+                            if (selected) {
+                              final v = opt['val'] as int;
+                              setModalState(() => intervalMinutes = v);
+                              await updateSettings(
+                                  "autoSmsScanIntervalMinutes", v,
+                                  updateGlobalState: true);
+                              SmsAutoRefreshService.instance.restartTimer();
+                            }
+                          },
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 12),
+
+                    // 3. Sync on App Resume Switch
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: getColor(context, "canvasContainer"),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const TextFont(
+                                  text: "Sync on App Open / Resume",
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                                const SizedBox(height: 2),
+                                TextFont(
+                                  text:
+                                      "Instantly check for newly arrived SMS whenever you open or switch to Cashew.",
+                                  fontSize: 11,
+                                  textColor: getColor(context, "textLight"),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Switch(
+                            value: syncOnResume,
+                            activeColor: Theme.of(context).colorScheme.primary,
+                            onChanged: (val) async {
+                              setModalState(() => syncOnResume = val);
+                              await updateSettings(
+                                  "autoSmsScanOnAppResume", val,
+                                  updateGlobalState: true);
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+
+                  // 4. Live Sync Engine & Permission Status
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .primary
+                          .withOpacity(0.06),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .primary
+                            .withOpacity(0.2),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.bolt_rounded,
+                                size: 16,
+                                color: Theme.of(context).colorScheme.primary),
+                            const SizedBox(width: 6),
+                            const TextFont(
+                              text: "Real-Time Detection Engine",
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        TextFont(
+                          text:
+                              "• Carrier SMS Broadcast: ${hasSmsPerm ? 'Active (Instant)' : 'Permission Needed'}\n• Telephony DB Observer: ${hasSmsPerm ? 'Active (Instant)' : 'Permission Needed'}\n• Notification Listener: ${hasNotifPerm ? 'Active' : 'Disabled (Optional)'}\n• Last Synced: $lastScanStr",
+                          fontSize: 11,
+                          textColor: getColor(context, "textLight"),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // 5. Manual Sync Now Button
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Button(
+                          label: "Sync SMS Inbox Now",
+                          icon: Icons.sync,
+                          color: Theme.of(context).colorScheme.primary,
+                          textColor: Theme.of(context).colorScheme.onPrimary,
+                          onTap: () async {
+                            Navigator.of(bottomSheetContext).pop();
+                            await SmsAutoRefreshService.instance
+                                .scanNow(showToast: true);
+                            if (onSaved != null) onSaved();
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   static void showAiModelSettingsDialog(BuildContext context,
@@ -1809,6 +2121,11 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
         ),
         if (getPlatform(ignoreEmulation: true) == PlatformOS.isAndroid) ...[
           IconButton(
+            tooltip: "Sync SMS Now & Settings",
+            icon: const Icon(Icons.sync_rounded),
+            onPressed: _showAutoRefreshSettingsDialog,
+          ),
+          IconButton(
             tooltip: "Scan Previous SMSes",
             icon: const Icon(Icons.history_edu_rounded),
             onPressed: _showScanPreviousSmsDialog,
@@ -1955,6 +2272,54 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
                       },
                     ),
                 ],
+              ),
+            ),
+          ),
+
+        // Auto-Refresh Status Chip
+        if (getPlatform(ignoreEmulation: true) == PlatformOS.isAndroid)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 2.0),
+            child: InkWell(
+              onTap: _showAutoRefreshSettingsDialog,
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: getColor(context, "canvasContainer"),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: getColor(context, "dividerColor").withOpacity(0.3),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      appStateSettings["autoSmsScanEnabled"] == true
+                          ? Icons.sync_rounded
+                          : Icons.sync_disabled_rounded,
+                      size: 16,
+                      color: appStateSettings["autoSmsScanEnabled"] == true
+                          ? Colors.green
+                          : getColor(context, "textLight"),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextFont(
+                        text: appStateSettings["autoSmsScanEnabled"] == true
+                            ? "Auto-Sync: Every ${appStateSettings['autoSmsScanIntervalMinutes'] == -1 ? 'App Open' : '${appStateSettings['autoSmsScanIntervalMinutes'] ?? 15}m'} • Real-Time SMS Active"
+                            : "Auto-Sync: Paused (Tap to configure)",
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Icon(
+                      Icons.tune_rounded,
+                      size: 14,
+                      color: getColor(context, "textLight"),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),

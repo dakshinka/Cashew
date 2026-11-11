@@ -24,6 +24,7 @@ import 'package:budget/struct/initializeNotifications.dart';
 import 'package:budget/widgets/navigationFramework.dart';
 import 'package:budget/widgets/restartApp.dart';
 import 'package:budget/struct/customDelayedCurve.dart';
+import 'package:budget/struct/smsReview/smsAutoRefreshService.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:budget/colors.dart';
@@ -156,6 +157,7 @@ class App extends StatelessWidget {
           updateGlobalAppLifecycleState: true,
           onAppResume: () async {
             await setHighRefreshRate();
+            await SmsAutoRefreshService.instance.onAppResume();
           },
           child: InitializeBiometrics(
             child: InitializeNotificationService(

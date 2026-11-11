@@ -6,6 +6,7 @@ import 'package:budget/widgets/navigationFramework.dart';
 import 'package:budget/widgets/navigationSidebar.dart';
 import 'package:budget/widgets/transactionEntry/swipeToSelectTransactions.dart';
 import 'package:budget/widgets/textWidgets.dart';
+import 'package:budget/struct/smsReview/smsAutoRefreshService.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -134,6 +135,9 @@ class _PullDownToRefreshSyncState extends State<PullDownToRefreshSync>
     if (runningCloudFunctions == false) {
       await runAllCloudFunctions(context);
     }
+    try {
+      await SmsAutoRefreshService.instance.scanNow(showToast: false);
+    } catch (_) {}
   }
 
   @override

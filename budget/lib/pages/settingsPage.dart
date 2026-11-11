@@ -695,6 +695,17 @@ class SettingsPageContent extends StatelessWidget {
               "Review pending auto-detected transactions from SMS, emails, or imports.",
         ),
 
+        if (getPlatform(ignoreEmulation: true) == PlatformOS.isAndroid)
+          SettingsContainer(
+            title: "SMS Auto-Sync & Real-Time Review",
+            icon: Icons.sync_rounded,
+            description:
+                "Configure automatic SMS polling intervals, real-time capture, and sync on app open.",
+            onTap: () {
+              ReviewInboxPage.showAutoRefreshSettingsDialog(context);
+            },
+          ),
+
         SettingsContainerOpenPage(
           openPage: const CashFlowForecastPage(),
           title: "Cash Flow Forecaster",

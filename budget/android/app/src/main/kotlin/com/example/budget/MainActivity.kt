@@ -1,8 +1,16 @@
 package com.budget.tracker_app
 
 import android.Manifest
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.database.ContentObserver
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import android.provider.Telephony
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import io.flutter.embedding.android.FlutterFragmentActivity
@@ -12,11 +20,17 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity: FlutterFragmentActivity() {
     private val SMS_CHANNEL = "com.budget.tracker_app/sms_inbox"
     private var pendingPermissionResult: MethodChannel.Result? = null
+    private var smsChannel: MethodChannel? = null
+    private var smsContentObserver: ContentObserver? = null
+    private var smsBroadcastReceiver: BroadcastReceiver? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SMS_CHANNEL).setMethodCallHandler { call, result ->
+        val channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SMS_CHANNEL)
+        smsChannel = channel
+
+        channel.setMethodCallHandler { call, result ->
             when (call.method) {
                 "checkSmsPermission" -> {
                     val granted = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED
@@ -24,11 +38,16 @@ class MainActivity: FlutterFragmentActivity() {
                 }
                 "requestSmsPermission" -> {
                     if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED) {
+                        registerSmsObservers()
                         result.success(true)
                     } else {
                         pendingPermissionResult = result
-                        ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.READ_SMS), 505)
+                        ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.READ_SMS, Manifest.permission.RECEIVE_SMS), 505)
                     }
+                }
+                "startListeningForSms" -> {
+                    registerSmsObservers()
+                    result.success(true)
                 }
                 "querySmsInbox" -> {
                     val days = call.argument<Int>("days") ?: 60
@@ -45,12 +64,75 @@ class MainActivity: FlutterFragmentActivity() {
                 else -> result.notImplemented()
             }
         }
+
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_SMS) == PackageManager.PERMISSION_GRANTED) {
+            registerSmsObservers()
+        }
+    }
+
+    private fun registerSmsObservers() {
+        try {
+            // 1. ContentObserver on content://sms: triggers immediately when any SMS app inserts a new message
+            if (smsContentObserver == null) {
+                smsContentObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+                    override fun onChange(selfChange: Boolean, uri: Uri?) {
+                        super.onChange(selfChange, uri)
+                        smsChannel?.invokeMethod("onSmsInboxChanged", null)
+                    }
+                }
+                contentResolver.registerContentObserver(
+                    Uri.parse("content://sms"),
+                    true,
+                    smsContentObserver!!
+                )
+            }
+
+            // 2. BroadcastReceiver for SMS_RECEIVED: catches incoming SMS broadcasts directly from the carrier
+            if (smsBroadcastReceiver == null) {
+                smsBroadcastReceiver = object : BroadcastReceiver() {
+                    override fun onReceive(context: Context?, intent: Intent?) {
+                        if (intent?.action == Telephony.Sms.Intents.SMS_RECEIVED_ACTION) {
+                            val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
+                            for (sms in messages) {
+                                val body = sms.displayMessageBody ?: sms.messageBody ?: ""
+                                val sender = sms.displayOriginatingAddress ?: sms.originatingAddress ?: "SMS"
+                                val timestamp = sms.timestampMillis
+                                if (body.isNotBlank()) {
+                                    val data = HashMap<String, Any>()
+                                    data["body"] = body
+                                    data["address"] = sender
+                                    data["date"] = timestamp
+                                    smsChannel?.invokeMethod("onRawSmsReceived", data)
+                                }
+                            }
+                        }
+                    }
+                }
+                val filter = IntentFilter(Telephony.Sms.Intents.SMS_RECEIVED_ACTION)
+                registerReceiver(smsBroadcastReceiver, filter)
+            }
+        } catch (e: Exception) {
+            // Permission might not be granted yet or device restriction
+        }
+    }
+
+    override fun onDestroy() {
+        smsContentObserver?.let {
+            try { contentResolver.unregisterContentObserver(it) } catch (_: Exception) {}
+        }
+        smsBroadcastReceiver?.let {
+            try { unregisterReceiver(it) } catch (_: Exception) {}
+        }
+        super.onDestroy()
     }
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 505) {
             val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+            if (granted) {
+                registerSmsObservers()
+            }
             pendingPermissionResult?.success(granted)
             pendingPermissionResult = null
         }

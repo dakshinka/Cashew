@@ -36,6 +36,7 @@ import 'package:budget/widgets/scrollbarWrap.dart';
 import 'package:budget/widgets/slidingSelectorIncomeExpense.dart';
 import 'package:budget/widgets/linearGradientFadedEdges.dart';
 import 'package:budget/widgets/pullDownToRefreshSync.dart';
+import 'package:budget/widgets/homeSmsSyncButton.dart';
 import 'package:budget/widgets/util/rightSideClipper.dart';
 import 'package:flutter/services.dart';
 import 'package:budget/widgets/util/checkWidgetLaunch.dart';
@@ -273,6 +274,7 @@ class HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                 ),
                               )
                             : SizedBox.shrink(),
+                        const HomeSmsSyncButton(),
                         Tooltip(
                           message: "edit-home".tr(),
                           child: IconButton(
@@ -291,6 +293,7 @@ class HomePageState extends State<HomePage> with TickerProviderStateMixin {
                     Container(
                         height: 1,
                         color: Theme.of(context).colorScheme.background),
+                    const HomePendingTransactionsBanner(),
 
                     showWelcomeBanner
                         ? ConstrainedBox(
