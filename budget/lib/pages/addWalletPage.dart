@@ -2,6 +2,7 @@ import 'package:budget/database/tables.dart';
 import 'package:budget/functions.dart';
 import 'package:budget/pages/addTransactionPage.dart';
 import 'package:budget/pages/editWalletsPage.dart';
+import 'package:budget/pages/creditCardTrackerPage.dart';
 import 'package:budget/pages/settingsPage.dart';
 import 'package:budget/struct/currencyFunctions.dart';
 import 'package:budget/struct/databaseGlobal.dart';
@@ -599,6 +600,33 @@ class _AddWalletPageState extends State<AddWalletPage> {
                             ),
                           ),
                         ),
+                        if (widget.wallet != null)
+                          Expanded(
+                            child: Padding(
+                              padding: const EdgeInsetsDirectional.symmetric(
+                                  horizontal: 4),
+                              child: SettingsContainer(
+                                isOutlinedColumn: true,
+                                isOutlined: true,
+                                onTap: () async {
+                                  await addWallet(popContext: false);
+                                  pushRoute(
+                                    context,
+                                    CreditCardTrackerPage(
+                                      wallet: widget.wallet!,
+                                    ),
+                                  );
+                                },
+                                title: "Credit Card & Interest",
+                                icon: appStateSettings["outlinedIcons"]
+                                    ? Icons.credit_score_outlined
+                                    : Icons.credit_score_rounded,
+                                iconScale: 1,
+                                isWideOutlined: true,
+                                horizontalPadding: 5,
+                              ),
+                            ),
+                          ),
                       ],
                     ),
                   );

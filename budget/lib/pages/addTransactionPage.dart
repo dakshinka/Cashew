@@ -1,3 +1,4 @@
+import 'package:collection/collection.dart';
 import 'package:budget/database/generatePreviewData.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/functions.dart';
@@ -158,6 +159,7 @@ class _AddTransactionPageState extends State<AddTransactionPage>
   bool notesInputFocused = false;
   bool showMoreOptions = false;
   List<String> selectedExcludedBudgetPks = [];
+  String? _pairedTransactionFk;
   late bool isAddedToLoanObjective =
       widget.selectedObjective?.type == ObjectiveType.loan ||
           widget.transaction?.objectiveLoanFk != null;
@@ -652,7 +654,8 @@ class _AddTransactionPageState extends State<AddTransactionPage>
     Transaction createdTransaction = Transaction(
       transactionPk:
           widget.transaction != null ? widget.transaction!.transactionPk : "-1",
-      pairedTransactionFk: widget.transaction?.pairedTransactionFk,
+      pairedTransactionFk:
+          _pairedTransactionFk ?? widget.transaction?.pairedTransactionFk,
       name: (selectedTitle ?? "").trim(),
       amount: (selectedIncome || selectedAmount == 0 //Prevent negative 0
           ? (selectedAmount ?? 0).abs()
@@ -756,6 +759,7 @@ class _AddTransactionPageState extends State<AddTransactionPage>
       selectedObjectivePk = widget.transaction!.objectiveFk;
       selectedObjectiveLoanPk = widget.transaction!.objectiveLoanFk;
       selectedExcludedBudgetPks = widget.transaction!.budgetFksExclude ?? [];
+      _pairedTransactionFk = widget.transaction!.pairedTransactionFk;
       // var amountString = widget.transaction!.amount.toStringAsFixed(2);
       // if (amountString.substring(amountString.length - 2) == "00") {
       //   selectedAmountCalculation =
@@ -1023,6 +1027,457 @@ class _AddTransactionPageState extends State<AddTransactionPage>
     if (result == true) {
       popRoute(context);
     }
+  }
+
+  Future<void> _unlinkTransferPairing() async {
+    if (_pairedTransactionFk == null) return;
+    final pairedTxFk = _pairedTransactionFk!;
+    final pairedTx = await database.tryGetTransactionFromPk(pairedTxFk);
+    if (pairedTx != null) {
+      await database.createOrUpdateTransaction(
+        pairedTx.copyWith(pairedTransactionFk: const Value(null)),
+        insert: false,
+      );
+    }
+    if (widget.transaction != null) {
+      await database.createOrUpdateTransaction(
+        widget.transaction!.copyWith(pairedTransactionFk: const Value(null)),
+        insert: false,
+      );
+    }
+    setState(() {
+      _pairedTransactionFk = null;
+    });
+    openSnackbar(
+      SnackbarMessage(
+        title: "Unlinked Transfer",
+        description: "Transactions are no longer paired.",
+        icon: Icons.link_off_rounded,
+      ),
+    );
+  }
+
+  Future<void> _showConvertToTransferSheet(BuildContext context) async {
+    final allWallets = Provider.of<AllWallets>(context, listen: false);
+    final currentWallet = allWallets.indexedByPk[selectedWalletPk] ??
+        allWallets.list.firstWhereOrNull((w) => w.walletPk == selectedWalletPk) ??
+        allWallets.list.first;
+    final otherWallets =
+        allWallets.list.where((w) => w.walletPk != currentWallet.walletPk).toList();
+
+    if (otherWallets.isEmpty) return;
+
+    TransactionWallet selectedTargetWallet = otherWallets.first;
+
+    await openBottomSheet(
+      context,
+      StatefulBuilder(
+        builder: (sheetContext, setSheetState) {
+          final isTargetCard =
+              selectedTargetWallet.name.toLowerCase().contains("card") ||
+                  selectedTargetWallet.name.toLowerCase().contains("credit");
+          final amountAbs =
+              (selectedAmount ?? widget.transaction?.amount ?? 0).abs();
+          final amountStr = convertToMoney(allWallets, amountAbs,
+              currencyKey: currentWallet.currency);
+
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context)
+                              .colorScheme
+                              .secondaryContainer
+                              .withOpacity(0.5),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(
+                          Icons.compare_arrows_rounded,
+                          size: 24,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const TextFont(
+                              text: "Convert to Account Transfer",
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            TextFont(
+                              text:
+                                  "Link this payment with Credit Card or another account",
+                              fontSize: 12,
+                              textColor: getColor(context, "textLight"),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: getColor(context, "canvasContainer"),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color:
+                            getColor(context, "dividerColor").withOpacity(0.3),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            TextFont(
+                              text: "Source Account (Money Out):",
+                              fontSize: 11,
+                              textColor: getColor(context, "textLight"),
+                            ),
+                            TextFont(
+                              text: currentWallet.name,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            TextFont(
+                              text: "Transfer Amount:",
+                              fontSize: 11,
+                              textColor: getColor(context, "textLight"),
+                            ),
+                            TextFont(
+                              text: amountStr,
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              textColor: getColor(context, "unPaidUpcoming"),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const TextFont(
+                    text: "Select Destination Account:",
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      for (final w in otherWallets)
+                        ChoiceChip(
+                          avatar: Icon(
+                            w.name.toLowerCase().contains("card") ||
+                                    w.name.toLowerCase().contains("credit")
+                                ? Icons.credit_card_rounded
+                                : w.name.toLowerCase().contains("cash")
+                                    ? Icons.payments_rounded
+                                    : Icons.account_balance_rounded,
+                            size: 16,
+                          ),
+                          label: TextFont(
+                            text: w.name,
+                            fontSize: 12,
+                            fontWeight:
+                                selectedTargetWallet.walletPk == w.walletPk
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
+                          ),
+                          selected: selectedTargetWallet.walletPk == w.walletPk,
+                          onSelected: (val) {
+                            if (val) {
+                              setSheetState(() {
+                                selectedTargetWallet = w;
+                              });
+                            }
+                          },
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .primary
+                          .withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .primary
+                            .withOpacity(0.2),
+                      ),
+                    ),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.info_outline_rounded,
+                          size: 18,
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextFont(
+                            text: isTargetCard
+                                ? "This will credit $amountStr to ${selectedTargetWallet.name} to pay down your card balance, and classify both entries as Transfer (no impact on your monthly expense budget)."
+                                : "This will transfer $amountStr to ${selectedTargetWallet.name}, pairing both accounts without inflating your expenses.",
+                            fontSize: 11,
+                            maxLines: 4,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Button(
+                          label: "Cancel",
+                          color: getColor(context, "canvasContainer"),
+                          textColor: getColor(context, "black"),
+                          onTap: () => Navigator.of(context).pop(),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        flex: 2,
+                        child: Button(
+                          label: "Confirm & Convert",
+                          color: Theme.of(context).colorScheme.primary,
+                          textColor: Theme.of(context).colorScheme.onPrimary,
+                          onTap: () async {
+                            final currentTx = widget.transaction;
+                            if (currentTx == null) return;
+
+                            await initializeBalanceCorrectionCategory();
+                            final defaultCategory =
+                                await (database.getCategory("0").$2);
+
+                            final newDepositPk = uuid.v4();
+
+                            // 1. Create counterpart in destination wallet
+                            final counterpartTx = Transaction(
+                              transactionPk: newDepositPk,
+                              pairedTransactionFk: currentTx.transactionPk,
+                              name: isTargetCard
+                                  ? "Payment from ${currentWallet.name}"
+                                  : "Transfer from ${currentWallet.name}",
+                              amount: amountAbs,
+                              note: _noteInputController.text,
+                              categoryFk: "0",
+                              walletFk: selectedTargetWallet.walletPk,
+                              dateCreated: selectedDate,
+                              income: true,
+                              paid: true,
+                              skipPaid: false,
+                            );
+                            await database.createOrUpdateTransaction(
+                              counterpartTx,
+                              insert: true,
+                            );
+
+                            // 2. Update current transaction to be outgoing paired transfer
+                            final updatedCurrent = currentTx.copyWith(
+                              pairedTransactionFk: Value(newDepositPk),
+                              categoryFk: "0",
+                              amount: -amountAbs,
+                              income: false,
+                            );
+                            await database.createOrUpdateTransaction(
+                              updatedCurrent,
+                              insert: false,
+                            );
+
+                            setSelectedCategory(defaultCategory);
+                            setSelectedIncome(false);
+                            setState(() {
+                              _pairedTransactionFk = newDepositPk;
+                            });
+
+                            Navigator.of(context).pop();
+                            openSnackbar(
+                              SnackbarMessage(
+                                title: "Converted to Transfer",
+                                description:
+                                    "Paired with ${selectedTargetWallet.name}",
+                                icon: Icons.compare_arrows_rounded,
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildTransferPairingSection(BuildContext context) {
+    if (widget.transaction == null) return const SizedBox.shrink();
+
+    final allWallets = Provider.of<AllWallets>(context);
+    if (allWallets.list.length < 2) return const SizedBox.shrink();
+
+    if (_pairedTransactionFk != null) {
+      return FutureBuilder<Transaction?>(
+        future: database.tryGetTransactionFromPk(_pairedTransactionFk!),
+        builder: (context, snapshot) {
+          final pairedTx = snapshot.data;
+          final pairedWallet = pairedTx != null
+              ? allWallets.indexedByPk[pairedTx.walletFk]
+              : null;
+          final walletName = pairedWallet?.name ?? "another account";
+
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.blue.withOpacity(0.08),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: Colors.blue.withOpacity(0.3),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.compare_arrows_rounded,
+                    color: Colors.blue.shade700,
+                    size: 24,
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        TextFont(
+                          text: "Paired Account Transfer",
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          textColor: Colors.blue.shade900,
+                        ),
+                        TextFont(
+                          text: "Linked with $walletName",
+                          fontSize: 11,
+                          textColor: Colors.blue.shade700,
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (pairedTx != null)
+                    IconButton(
+                      icon: const Icon(Icons.open_in_new_rounded, size: 20),
+                      tooltip: "View Paired Transaction",
+                      onPressed: () {
+                        pushRoute(
+                          context,
+                          AddTransactionPage(
+                            transaction: pairedTx,
+                            routesToPopAfterDelete:
+                                RoutesToPopAfterDelete.None,
+                          ),
+                        );
+                      },
+                    ),
+                  IconButton(
+                    icon: const Icon(Icons.link_off_rounded, size: 20),
+                    tooltip: "Unlink Transfer",
+                    onPressed: _unlinkTransferPairing,
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+      child: InkWell(
+        onTap: () => _showConvertToTransferSheet(context),
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Theme.of(context)
+                .colorScheme
+                .secondaryContainer
+                .withOpacity(0.35),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: Theme.of(context)
+                  .colorScheme
+                  .secondaryContainer
+                  .withOpacity(0.7),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                Icons.compare_arrows_rounded,
+                color: Theme.of(context).colorScheme.primary,
+                size: 24,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const TextFont(
+                      text: "Convert to Transfer / Pair Account",
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    TextFont(
+                      text:
+                          "Link with Credit Card or another account as a transfer",
+                      fontSize: 11,
+                      textColor: getColor(context, "textLight"),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: getColor(context, "textLight"),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   void openSelectSpecialTransactionTypeInfo() {
@@ -1476,6 +1931,7 @@ class _AddTransactionPageState extends State<AddTransactionPage>
                         ),
                       ),
                     ),
+              _buildTransferPairingSection(context),
               SelectAddedBudget(
                 selectedBudgetPk: selectedBudgetPk,
                 setSelectedBudget: setSelectedBudgetPk,

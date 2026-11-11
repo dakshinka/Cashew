@@ -504,12 +504,14 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
             ?.name ??
         entry.suggestedCategoryName;
 
+    final otherWallets =
+        allWallets.list.where((w) => w.walletPk != _selectedWalletPk).toList();
     bool isIncome = entry.isIncome;
-    bool isTransferToCash = entry.isTransferToCash;
+    bool isTransfer = entry.destinationWalletPk != null || entry.isTransferToCash;
     String targetWalletPk = entry.destinationWalletPk ??
-        (isTransferToCash && cashWallet != null
+        (entry.isTransferToCash && cashWallet != null
             ? cashWallet.walletPk
-            : _selectedWalletPk ?? "");
+            : otherWallets.firstOrNull?.walletPk ?? "");
 
     await openBottomSheet(
       context,
@@ -622,22 +624,22 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                       const SizedBox(width: 8),
                       ChoiceChip(
                         label: const TextFont(text: "Expense (-)", fontSize: 11),
-                        selected: !isIncome && !isTransferToCash,
+                        selected: !isIncome && !isTransfer,
                         onSelected: (_) {
                           setSheetState(() {
                             isIncome = false;
-                            isTransferToCash = false;
+                            isTransfer = false;
                           });
                         },
                       ),
                       const SizedBox(width: 6),
                       ChoiceChip(
                         label: const TextFont(text: "Income (+)", fontSize: 11),
-                        selected: isIncome && !isTransferToCash,
+                        selected: isIncome && !isTransfer,
                         onSelected: (_) {
                           setSheetState(() {
                             isIncome = true;
-                            isTransferToCash = false;
+                            isTransfer = false;
                           });
                         },
                       ),
@@ -645,67 +647,105 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                   ),
                   const SizedBox(height: 8),
 
-                  // Cash Transfer Segment (User Control)
+                  // Account Transfer / Card Payment Segment (User Control)
                   Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: isTransferToCash
-                          ? Colors.amber.withOpacity(0.12)
+                      color: isTransfer
+                          ? Colors.blue.withOpacity(0.08)
                           : getColor(context, "canvasContainer"),
                       borderRadius: BorderRadius.circular(10),
                       border: Border.all(
-                        color: isTransferToCash
-                            ? Colors.amber.withOpacity(0.5)
+                        color: isTransfer
+                            ? Colors.blue.withOpacity(0.4)
                             : getColor(context, "dividerColor").withOpacity(0.25),
                       ),
                     ),
-                    child: Row(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Icon(
-                          Icons.payments_rounded,
-                          size: 22,
-                          color: isTransferToCash
-                              ? Colors.amber.shade800
-                              : getColor(context, "textLight"),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.compare_arrows_rounded,
+                              size: 22,
+                              color: isTransfer
+                                  ? Colors.blue.shade800
+                                  : getColor(context, "textLight"),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  TextFont(
+                                    text: "Transfer to Another Account",
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                    textColor: isTransfer
+                                        ? Colors.blue.shade900
+                                        : getColor(context, "black"),
+                                  ),
+                                  TextFont(
+                                    text:
+                                        "Credit Card bill payment, cash withdrawal, or inter-account transfer",
+                                    fontSize: 10,
+                                    textColor: getColor(context, "textLight"),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Switch(
+                              value: isTransfer,
+                              activeColor: Colors.blue.shade800,
+                              onChanged: (val) {
+                                setSheetState(() {
+                                  isTransfer = val;
+                                  if (val) {
+                                    isIncome = false;
+                                    if (targetWalletPk.isEmpty || targetWalletPk == _selectedWalletPk) {
+                                      targetWalletPk = otherWallets.firstOrNull?.walletPk ?? "";
+                                    }
+                                  }
+                                });
+                              },
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                        if (isTransfer && otherWallets.isNotEmpty) ...[
+                          const SizedBox(height: 10),
+                          const TextFont(
+                            text: "Destination Account:",
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          const SizedBox(height: 6),
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 4,
                             children: [
-                              TextFont(
-                                text: "Transfer to Cash Wallet",
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                textColor: isTransferToCash
-                                    ? Colors.amber.shade900
-                                    : getColor(context, "black"),
-                              ),
-                              TextFont(
-                                text:
-                                    "Physical cash tracking: debits bank, credits cash wallet",
-                                fontSize: 10,
-                                textColor: getColor(context, "textLight"),
-                              ),
+                              for (final w in otherWallets)
+                                ChoiceChip(
+                                  label: TextFont(
+                                    text: w.name,
+                                    fontSize: 11,
+                                    fontWeight: targetWalletPk == w.walletPk
+                                        ? FontWeight.bold
+                                        : FontWeight.normal,
+                                  ),
+                                  selected: targetWalletPk == w.walletPk,
+                                  onSelected: (selected) {
+                                    if (selected) {
+                                      setSheetState(() {
+                                        targetWalletPk = w.walletPk;
+                                      });
+                                    }
+                                  },
+                                ),
                             ],
                           ),
-                        ),
-                        Switch(
-                          value: isTransferToCash,
-                          activeColor: Colors.amber.shade800,
-                          onChanged: (val) {
-                            setSheetState(() {
-                              isTransferToCash = val;
-                              if (val) {
-                                isIncome = false;
-                                if (cashWallet != null) {
-                                  targetWalletPk = cashWallet.walletPk;
-                                }
-                              }
-                            });
-                          },
-                        ),
+                        ],
                       ],
                     ),
                   ),
@@ -809,10 +849,18 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                                   double.tryParse(amountController.text.trim()) ??
                                       entry.amount;
                               entry.isIncome = isIncome;
-                              entry.isTransferToCash = isTransferToCash;
-                              entry.suggestedCategoryPk = selectedCatPk;
-                              entry.suggestedCategoryName = selectedCatName;
-                              entry.destinationWalletPk = targetWalletPk;
+                              entry.destinationWalletPk =
+                                  isTransfer ? targetWalletPk : null;
+                              entry.isTransferToCash = isTransfer &&
+                                  (allWallets.indexedByPk[targetWalletPk]
+                                          ?.name
+                                          .toLowerCase()
+                                          .contains("cash") ??
+                                      false);
+                              entry.suggestedCategoryPk =
+                                  isTransfer ? "0" : selectedCatPk;
+                              entry.suggestedCategoryName =
+                                  isTransfer ? "Transfer" : selectedCatName;
                               entry.isUserReviewed = true;
                               entry.isSelected = true;
                             });
@@ -932,48 +980,68 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
 
       for (final entry in verifiedToImport) {
         try {
-          // 1. Check if user configured this as a Transfer to Cash
-          if (entry.isTransferToCash) {
-            TransactionWallet? cashWallet = entry.destinationWalletPk != null
+          // 1. Check if user configured this as a Transfer (to Credit Card, Cash, etc.)
+          final isTransfer =
+              entry.destinationWalletPk != null || entry.isTransferToCash;
+          if (isTransfer) {
+            TransactionWallet? targetWallet = entry.destinationWalletPk != null
                 ? allWallets.indexedByPk[entry.destinationWalletPk]
                 : allWallets.list.firstWhereOrNull(
                     (w) => w.name.toLowerCase().contains("cash"),
                   );
 
-            // If no specific wallet named 'cash', fallback to another available wallet
-            cashWallet ??=
+            // If no specific wallet found, fallback to another available wallet
+            targetWallet ??=
                 allWallets.list.firstWhereOrNull((w) => w.walletPk != walletPk);
 
-            if (cashWallet != null) {
+            if (targetWallet != null) {
               final withdrawalAmt = entry.amount.abs();
               final now = entry.date;
-              final note = "ATM Cash Withdrawal\nTransferred to ${cashWallet.name}\nStatement Narration: ${entry.rawNarration}" +
-                  (entry.referenceNo != null ? "\nRef: ${entry.referenceNo}" : "");
+              final isCash =
+                  targetWallet.name.toLowerCase().contains("cash");
+              final isCard =
+                  targetWallet.name.toLowerCase().contains("card") ||
+                      targetWallet.name.toLowerCase().contains("credit");
 
-              final depositTxPk = "${entry.id}_cash";
+              final note = (isCash
+                      ? "ATM Cash Withdrawal\n"
+                      : isCard
+                          ? "Credit Card Bill Payment\n"
+                          : "Account Transfer\n") +
+                  "Transferred to ${targetWallet.name}\nStatement Narration: ${entry.rawNarration}" +
+                  (entry.referenceNo != null
+                      ? "\nRef: ${entry.referenceNo}"
+                      : "");
+
+              final depositTxPk = "${entry.id}_transfer";
               final bankTxPk = entry.id;
 
-              // Credit Cash Wallet (Money In to Cash)
+              // Credit Target Wallet (e.g. Credit Card or Cash)
               final depositTx = Transaction(
                 transactionPk: depositTxPk,
                 pairedTransactionFk: bankTxPk,
-                name: "Cash from ${allWallets.indexedByPk[walletPk]?.name ?? 'Bank'}",
+                name: isCash
+                    ? "Cash from ${allWallets.indexedByPk[walletPk]?.name ?? 'Bank'}"
+                    : "Payment from ${allWallets.indexedByPk[walletPk]?.name ?? 'Bank'}",
                 amount: withdrawalAmt,
                 note: note,
                 categoryFk: "0",
-                walletFk: cashWallet.walletPk,
+                walletFk: targetWallet.walletPk,
                 dateCreated: now.add(const Duration(seconds: 1)),
                 income: true,
                 paid: true,
                 skipPaid: false,
               );
-              await database.createOrUpdateTransaction(depositTx, insert: false);
+              await database.createOrUpdateTransaction(depositTx,
+                  insert: false);
 
               // Debit Bank Account (Money Out from Bank)
               final bankTx = Transaction(
                 transactionPk: bankTxPk,
                 pairedTransactionFk: depositTxPk,
-                name: entry.cleanMerchant,
+                name: isCard
+                    ? "Pay ${targetWallet.name}"
+                    : entry.cleanMerchant,
                 amount: -withdrawalAmt,
                 note: note,
                 categoryFk: "0",
@@ -1657,6 +1725,13 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
             .indexedByPk[_selectedWalletPk]?.currency ??
         "";
 
+    final allWallets = Provider.of<AllWallets>(context, listen: false);
+    final isTransfer =
+        entry.destinationWalletPk != null || entry.isTransferToCash;
+    final targetWallet = entry.destinationWalletPk != null
+        ? allWallets.indexedByPk[entry.destinationWalletPk]
+        : null;
+
     final isCash = entry.isCashWithdrawal;
     final isDup = entry.duplicateState != DuplicateState.unique;
     final isPendingSms = isDup && entry.matchedSource == 'review_inbox';
@@ -1667,12 +1742,16 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
     String statusTitle;
     IconData statusIcon;
 
-    if (isCash) {
+    if (isTransfer) {
+      accentColor = Colors.blue.shade800;
+      bgTint = Colors.blue.withOpacity(0.06);
+      statusTitle =
+          "⇄ Transfer to ${targetWallet?.name ?? (entry.isTransferToCash ? 'Cash Wallet' : 'Account')}";
+      statusIcon = Icons.compare_arrows_rounded;
+    } else if (isCash) {
       accentColor = Colors.amber.shade800;
       bgTint = Colors.amber.withOpacity(0.06);
-      statusTitle = entry.isTransferToCash
-          ? "💵 Cash Withdrawal (⇄ Transfers to Cash Wallet)"
-          : "💵 Cash Withdrawal (Manual Cash Control)";
+      statusTitle = "💵 Cash Withdrawal (Manual Cash Control)";
       statusIcon = Icons.payments_rounded;
     } else if (isPendingSms) {
       accentColor = Colors.purple.shade700;

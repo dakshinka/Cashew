@@ -4,6 +4,7 @@ import 'package:budget/pages/addBudgetPage.dart';
 import 'package:budget/pages/addTransactionPage.dart';
 import 'package:budget/pages/addWalletPage.dart';
 import 'package:budget/pages/creditDebtTransactionsPage.dart';
+import 'package:budget/pages/creditCardTrackerPage.dart';
 import 'package:budget/pages/homePage/homePageLineGraph.dart';
 import 'package:budget/pages/homePage/homePageNetWorth.dart';
 import 'package:budget/pages/pastBudgetsPage.dart';
@@ -1306,6 +1307,19 @@ class WalletDetailsPageState extends State<WalletDetailsPage>
                             fullSnap: true,
                             TransferBalancePopup(
                                 wallet: widget.wallet!, allowEditWallet: false),
+                          );
+                        },
+                      ),
+                      DropdownItemMenu(
+                        id: "credit-card-billing",
+                        label: "Credit Card & Interest Settings",
+                        icon: appStateSettings["outlinedIcons"]
+                            ? Icons.credit_score_outlined
+                            : Icons.credit_score_rounded,
+                        action: () {
+                          pushRoute(
+                            context,
+                            CreditCardTrackerPage(wallet: widget.wallet!),
                           );
                         },
                       ),

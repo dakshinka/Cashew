@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:budget/colors.dart';
+import 'package:provider/provider.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/functions.dart';
 import 'package:budget/pages/creditCardTrackerPage.dart';
@@ -17,7 +17,12 @@ class CreditCardBannerWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final config = CreditCardManager.instance.getConfig(wallet.walletPk);
-    final theme = Theme.of(context);
+    final isCard = config.isEnabled ||
+        wallet.name.toLowerCase().contains("card") ||
+        wallet.name.toLowerCase().contains("credit");
+    if (!isCard) return const SizedBox.shrink();
+
+    final allWallets = Provider.of<AllWallets>(context);
 
     return StreamBuilder<List<Transaction>>(
       stream: database.getAllTransactionsFromWallet(wallet.walletPk).asStream(),
@@ -26,6 +31,12 @@ class CreditCardBannerWidget extends StatelessWidget {
         final analysis = CreditCardAnalysisResult.analyze(
           config: config,
           transactions: transactions,
+        );
+
+        final dailyAccrualStr = convertToMoney(
+          allWallets,
+          analysis.dailyAccrualRate,
+          currencyKey: wallet.currency,
         );
 
         return Padding(
@@ -77,7 +88,7 @@ class CreditCardBannerWidget extends StatelessWidget {
                         TextFont(
                           text: analysis.isGracePeriodActive
                               ? "0% interest • Full previous balance paid"
-                              : "Accruing \$${analysis.dailyAccrualRate.toStringAsFixed(2)}/day • Tap for interest breakdown",
+                              : "Accruing $dailyAccrualStr/day • Tap for interest breakdown",
                           fontSize: 12,
                           textColor: analysis.isGracePeriodActive
                               ? Colors.green.shade700
