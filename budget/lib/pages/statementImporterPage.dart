@@ -42,6 +42,7 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
   String? _stageMessage;
   String? _loadedFileName;
   String _filterMode = "all"; // "all", "missing", "reconciled"
+  DateTime? _filterStartDate;
   CreditCardStatementSummary? _creditCardSummary;
 
   @override
@@ -1838,6 +1839,63 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                         onSelected: (_) =>
                             setState(() => _filterMode = "reconciled"),
                       ),
+                      ActionChip(
+                        avatar: Icon(Icons.calendar_today_rounded,
+                            size: 13,
+                            color: _filterStartDate != null
+                                ? Theme.of(context).colorScheme.primary
+                                : Colors.grey),
+                        label: TextFont(
+                          text: _filterStartDate == null
+                              ? "Filter Date (e.g. From 30 Oct)"
+                              : "From ${DateFormat('dd MMM yyyy').format(_filterStartDate!)}",
+                          fontSize: 11,
+                          fontWeight: _filterStartDate != null
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                          textColor: _filterStartDate != null
+                              ? Theme.of(context).colorScheme.primary
+                              : null,
+                        ),
+                        onPressed: () async {
+                          final picked = await showDatePicker(
+                            context: context,
+                            initialDate: _filterStartDate ?? DateTime(2026, 10, 30),
+                            firstDate: DateTime(2020),
+                            lastDate: DateTime(2030),
+                          );
+                          if (picked != null) {
+                            setState(() {
+                              _filterStartDate = picked;
+                              for (final e in _parsedEntries) {
+                                if (e.date.isBefore(picked)) {
+                                  e.isSelected = false;
+                                } else if (e.duplicateState == DuplicateState.unique) {
+                                  e.isSelected = true;
+                                }
+                              }
+                            });
+                          }
+                        },
+                      ),
+                      if (_filterStartDate != null)
+                        ActionChip(
+                          avatar: const Icon(Icons.close_rounded, size: 13),
+                          label: const TextFont(
+                            text: "Clear Date",
+                            fontSize: 11,
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              _filterStartDate = null;
+                              for (final e in _parsedEntries) {
+                                if (e.duplicateState == DuplicateState.unique) {
+                                  e.isSelected = true;
+                                }
+                              }
+                            });
+                          },
+                        ),
                     ],
                   ),
 
@@ -1879,8 +1937,11 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
 
           _buildCreditCardSummaryCard(),
 
-          // Entries List (Filtered by reconciliation state)
+          // Entries List (Filtered by reconciliation state & optional start date)
           ..._parsedEntries.where((e) {
+            if (_filterStartDate != null && e.date.isBefore(_filterStartDate!)) {
+              return false;
+            }
             if (_filterMode == "missing") {
               return e.duplicateState == DuplicateState.unique &&
                   !e.isCashWithdrawal;
