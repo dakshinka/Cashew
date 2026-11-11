@@ -881,12 +881,28 @@ Respond ONLY with valid JSON array:
     return entries;
   }
 
+  /// Generates deterministic IDs for each statement entry based on account, date, amount, flow, and occurrence
+  static void assignDeterministicIds(List<StatementEntry> entries,
+      {String? walletPk}) {
+    final Map<String, int> occurrenceMap = {};
+    final wPk = walletPk ?? "0";
+    for (int i = 0; i < entries.length; i++) {
+      final e = entries[i];
+      final key =
+          "${wPk}_${e.date.year}${e.date.month.toString().padLeft(2, '0')}${e.date.day.toString().padLeft(2, '0')}_${(e.amount.abs() * 100).toInt()}_${e.isIncome ? 'cr' : 'dr'}";
+      final occ = occurrenceMap[key] ?? 0;
+      occurrenceMap[key] = occ + 1;
+      e.id = "stmt_${key}_$occ";
+    }
+  }
+
   /// Checks existing transactions in wallet and Review Inbox to reconcile and flag duplicates
   static Future<void> checkDuplicates(
     List<StatementEntry> entries,
     String walletPk,
   ) async {
     if (entries.isEmpty) return;
+    assignDeterministicIds(entries, walletPk: walletPk);
 
     DateTime minDate = entries.first.date;
     DateTime maxDate = entries.first.date;

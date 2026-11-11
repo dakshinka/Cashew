@@ -17,6 +17,7 @@ import 'package:budget/struct/statementImporter/statementModels.dart';
 import 'package:budget/struct/statementImporter/statementParser.dart';
 import 'package:budget/widgets/button.dart';
 import 'package:budget/widgets/framework/pageFramework.dart';
+import 'package:budget/widgets/navigationFramework.dart';
 import 'package:budget/widgets/openBottomSheet.dart';
 import 'package:budget/widgets/openSnackbar.dart';
 import 'package:budget/widgets/globalSnackbar.dart';
@@ -34,6 +35,7 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
   String? _selectedWalletPk;
   List<StatementEntry> _parsedEntries = [];
   bool _isProcessing = false;
+  bool _isImporting = false;
   String? _loadedFileName;
   String _filterMode = "all"; // "all", "missing", "reconciled"
 
@@ -801,137 +803,214 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
   }
 
   Future<void> _commitImport() async {
-    final toImport = _parsedEntries.where((e) => e.isSelected).toList();
-    if (toImport.isEmpty) {
-      openSnackbar(
-        SnackbarMessage(
-          title: "None Selected",
-          description: "Select at least one transaction to import.",
-          icon: Icons.info_outline,
-        ),
-      );
-      return;
-    }
-
-    final walletPk = _selectedWalletPk ?? "";
-    if (walletPk.isEmpty) {
-      openSnackbar(
-        SnackbarMessage(
-          title: "Select an Account",
-          description: "Choose a target account/wallet before importing.",
-          icon: Icons.account_balance_wallet_outlined,
-        ),
-      );
-      return;
-    }
-
+    if (_isImporting || _isProcessing) return;
+    _isImporting = true;
     setState(() => _isProcessing = true);
 
-    int count = 0;
-    final allWallets = Provider.of<AllWallets>(context, listen: false);
-    final defaultCat = (await database.getAllCategories()).firstOrNull;
-
-    for (final entry in toImport) {
-      try {
-        // 1. Check if user configured this as a Transfer to Cash
-        if (entry.isTransferToCash) {
-          TransactionWallet? cashWallet = entry.destinationWalletPk != null
-              ? allWallets.indexedByPk[entry.destinationWalletPk]
-              : allWallets.list.firstWhereOrNull(
-                  (w) => w.name.toLowerCase().contains("cash"),
-                );
-
-          // If no specific wallet named 'cash', fallback to another available wallet
-          cashWallet ??=
-              allWallets.list.firstWhereOrNull((w) => w.walletPk != walletPk);
-
-          if (cashWallet != null) {
-            final withdrawalAmt = entry.amount.abs();
-            final now = entry.date;
-            final note = "ATM Cash Withdrawal\nTransferred to ${cashWallet.name}\nStatement Narration: ${entry.rawNarration}" +
-                (entry.referenceNo != null ? "\nRef: ${entry.referenceNo}" : "");
-
-            final depositTxPk = uuid.v4();
-            final bankTxPk = entry.id;
-
-            // Credit Cash Wallet (Money In to Cash)
-            final depositTx = Transaction(
-              transactionPk: depositTxPk,
-              pairedTransactionFk: bankTxPk,
-              name: "Cash from ${allWallets.indexedByPk[walletPk]?.name ?? 'Bank'}",
-              amount: withdrawalAmt,
-              note: note,
-              categoryFk: "0",
-              walletFk: cashWallet.walletPk,
-              dateCreated: now.add(const Duration(seconds: 1)),
-              income: true,
-              paid: true,
-              skipPaid: false,
-            );
-            await database.createOrUpdateTransaction(depositTx, insert: true);
-
-            // Debit Bank Account (Money Out from Bank)
-            final bankTx = Transaction(
-              transactionPk: bankTxPk,
-              pairedTransactionFk: depositTxPk,
-              name: entry.cleanMerchant,
-              amount: -withdrawalAmt,
-              note: note,
-              categoryFk: "0",
-              walletFk: walletPk,
-              dateCreated: now,
-              income: false,
-              paid: true,
-              skipPaid: false,
-            );
-            await database.createOrUpdateTransaction(bankTx, insert: true);
-            count++;
-            continue;
-          }
-        }
-
-        // 2. Standard Transaction
-        final amount =
-            entry.isIncome ? entry.amount.abs() : -entry.amount.abs();
-        final catPk =
-            entry.suggestedCategoryPk ?? defaultCat?.categoryPk ?? "";
-
-        final tx = Transaction(
-          transactionPk: entry.id,
-          name: entry.cleanMerchant,
-          amount: amount,
-          note: "Statement Import (${_loadedFileName ?? 'Statement'}):\n${entry.rawNarration}" +
-              (entry.referenceNo != null ? "\nRef: ${entry.referenceNo}" : ""),
-          categoryFk: catPk,
-          walletFk: entry.destinationWalletPk ?? walletPk,
-          dateCreated: entry.date,
-          income: entry.isIncome,
-          paid: true,
-          skipPaid: false,
+    try {
+      final toImport = _parsedEntries.where((e) => e.isSelected).toList();
+      if (toImport.isEmpty) {
+        openSnackbar(
+          SnackbarMessage(
+            title: "None Selected",
+            description: "Select at least one transaction to import.",
+            icon: Icons.info_outline,
+          ),
         );
+        return;
+      }
 
-        await database.createOrUpdateTransaction(tx, insert: true);
-        count++;
-      } catch (e) {
-        debugPrint("Error inserting statement transaction: $e");
+      final walletPk = _selectedWalletPk ?? "";
+      if (walletPk.isEmpty) {
+        openSnackbar(
+          SnackbarMessage(
+            title: "Select an Account",
+            description: "Choose a target account/wallet before importing.",
+            icon: Icons.account_balance_wallet_outlined,
+          ),
+        );
+        return;
+      }
+
+      // Assign deterministic IDs based on target wallet and row details
+      StatementParser.assignDeterministicIds(_parsedEntries,
+          walletPk: walletPk);
+
+      final allWallets = Provider.of<AllWallets>(context, listen: false);
+      final defaultCat = (await database.getAllCategories()).firstOrNull;
+
+      // 1. Fetch existing transactions to guarantee pre-insertion deduplication
+      final existingTxns =
+          await database.getAllTransactionsFromWallet(walletPk);
+
+      final List<StatementEntry> verifiedToImport = [];
+      int alreadyInDbCount = 0;
+
+      for (final entry in toImport) {
+        final entryDateOnly =
+            DateTime(entry.date.year, entry.date.month, entry.date.day);
+        final alreadyExists = existingTxns.any((t) {
+          if (t.transactionPk == entry.id) return true;
+
+          final tDateOnly = DateTime(
+              t.dateCreated.year, t.dateCreated.month, t.dateCreated.day);
+          final diffDays = tDateOnly.difference(entryDateOnly).inDays.abs();
+          if (diffDays > 2) return false;
+
+          final amountMatches =
+              (t.amount.abs() - entry.amount.abs()).abs() < 0.01;
+          if (!amountMatches) return false;
+
+          final typeMatches = (t.income == entry.isIncome);
+          if (!typeMatches) return false;
+
+          final noteMatches = (entry.referenceNo != null &&
+                  entry.referenceNo!.isNotEmpty &&
+                  t.note.contains(entry.referenceNo!)) ||
+              t.note.contains(entry.rawNarration.trim()) ||
+              t.name.toLowerCase() == entry.cleanMerchant.toLowerCase();
+
+          return noteMatches ||
+              (diffDays == 0 &&
+                  t.name
+                      .toLowerCase()
+                      .contains(entry.cleanMerchant.toLowerCase().split(' ').first));
+        });
+
+        if (alreadyExists) {
+          alreadyInDbCount++;
+        } else {
+          verifiedToImport.add(entry);
+        }
+      }
+
+      if (verifiedToImport.isEmpty) {
+        openSnackbar(
+          SnackbarMessage(
+            title: "Already Imported",
+            description:
+                "All $alreadyInDbCount selected transactions already exist in this account. No duplicates were added.",
+            icon: Icons.info_outline,
+          ),
+        );
+        return;
+      }
+
+      int count = 0;
+
+      for (final entry in verifiedToImport) {
+        try {
+          // 1. Check if user configured this as a Transfer to Cash
+          if (entry.isTransferToCash) {
+            TransactionWallet? cashWallet = entry.destinationWalletPk != null
+                ? allWallets.indexedByPk[entry.destinationWalletPk]
+                : allWallets.list.firstWhereOrNull(
+                    (w) => w.name.toLowerCase().contains("cash"),
+                  );
+
+            // If no specific wallet named 'cash', fallback to another available wallet
+            cashWallet ??=
+                allWallets.list.firstWhereOrNull((w) => w.walletPk != walletPk);
+
+            if (cashWallet != null) {
+              final withdrawalAmt = entry.amount.abs();
+              final now = entry.date;
+              final note = "ATM Cash Withdrawal\nTransferred to ${cashWallet.name}\nStatement Narration: ${entry.rawNarration}" +
+                  (entry.referenceNo != null ? "\nRef: ${entry.referenceNo}" : "");
+
+              final depositTxPk = "${entry.id}_cash";
+              final bankTxPk = entry.id;
+
+              // Credit Cash Wallet (Money In to Cash)
+              final depositTx = Transaction(
+                transactionPk: depositTxPk,
+                pairedTransactionFk: bankTxPk,
+                name: "Cash from ${allWallets.indexedByPk[walletPk]?.name ?? 'Bank'}",
+                amount: withdrawalAmt,
+                note: note,
+                categoryFk: "0",
+                walletFk: cashWallet.walletPk,
+                dateCreated: now.add(const Duration(seconds: 1)),
+                income: true,
+                paid: true,
+                skipPaid: false,
+              );
+              await database.createOrUpdateTransaction(depositTx, insert: false);
+
+              // Debit Bank Account (Money Out from Bank)
+              final bankTx = Transaction(
+                transactionPk: bankTxPk,
+                pairedTransactionFk: depositTxPk,
+                name: entry.cleanMerchant,
+                amount: -withdrawalAmt,
+                note: note,
+                categoryFk: "0",
+                walletFk: walletPk,
+                dateCreated: now,
+                income: false,
+                paid: true,
+                skipPaid: false,
+              );
+              await database.createOrUpdateTransaction(bankTx, insert: false);
+              count++;
+              continue;
+            }
+          }
+
+          // 2. Standard Transaction
+          final amount =
+              entry.isIncome ? entry.amount.abs() : -entry.amount.abs();
+          final catPk =
+              entry.suggestedCategoryPk ?? defaultCat?.categoryPk ?? "";
+
+          final tx = Transaction(
+            transactionPk: entry.id,
+            name: entry.cleanMerchant,
+            amount: amount,
+            note: "Statement Import (${_loadedFileName ?? 'Statement'}):\n${entry.rawNarration}" +
+                (entry.referenceNo != null ? "\nRef: ${entry.referenceNo}" : ""),
+            categoryFk: catPk,
+            walletFk: entry.destinationWalletPk ?? walletPk,
+            dateCreated: entry.date,
+            income: entry.isIncome,
+            paid: true,
+            skipPaid: false,
+          );
+
+          await database.createOrUpdateTransaction(tx, insert: false);
+          count++;
+        } catch (e) {
+          debugPrint("Error inserting statement transaction: $e");
+        }
+      }
+
+      setState(() {
+        _parsedEntries.clear();
+        _loadedFileName = null;
+      });
+
+      final skipMsg = alreadyInDbCount > 0
+          ? " (prevented $alreadyInDbCount duplicates)"
+          : "";
+      openSnackbar(
+        SnackbarMessage(
+          title: "Import Complete!",
+          description: "Successfully imported $count transactions$skipMsg.",
+          icon: Icons.check_circle_outline,
+        ),
+      );
+
+      // Refresh home and navigation state
+      homePageStateKey.currentState?.refreshState();
+      popRoute(context);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isProcessing = false;
+          _isImporting = false;
+        });
       }
     }
-
-    setState(() {
-      _isProcessing = false;
-      _parsedEntries.clear();
-      _loadedFileName = null;
-    });
-
-    openSnackbar(
-      SnackbarMessage(
-        title: "Import Complete!",
-        description: "Successfully imported $count transactions.",
-        icon: Icons.check_circle_outline,
-      ),
-    );
-
-    popRoute(context);
   }
 
   @override
@@ -956,63 +1035,100 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
         IconButton(
           tooltip: "Paste CSV",
           icon: const Icon(Icons.paste_rounded),
-          onPressed: _showPasteDialog,
+          onPressed: _isProcessing ? null : _showPasteDialog,
+        ),
+        IconButton(
+          tooltip: "Clean Duplicates",
+          icon: const Icon(Icons.find_replace_rounded),
+          onPressed: _isProcessing
+              ? null
+              : () async {
+                  final wallet = wallets.firstWhereOrNull(
+                      (w) => w.walletPk == _selectedWalletPk);
+                  await BackupShareManager
+                      .findAndRemoveDuplicatesWithConfirmation(
+                    context,
+                    targetWalletPk: _selectedWalletPk,
+                    targetWalletName: wallet?.name,
+                  );
+                  if (mounted &&
+                      _parsedEntries.isNotEmpty &&
+                      _selectedWalletPk != null) {
+                    await StatementParser.checkDuplicates(
+                        _parsedEntries, _selectedWalletPk!);
+                    setState(() {});
+                  }
+                },
         ),
         IconButton(
           tooltip: "Purge Transactions",
           icon: const Icon(Icons.delete_sweep_rounded),
-          onPressed: () async {
-            final wallet = wallets.firstWhereOrNull(
-                (w) => w.walletPk == _selectedWalletPk);
-            await BackupShareManager.purgeOnlyTransactionsWithConfirmation(
-              context,
-              targetWalletPk: _selectedWalletPk,
-              targetWalletName: wallet?.name,
-            );
-            if (mounted &&
-                _parsedEntries.isNotEmpty &&
-                _selectedWalletPk != null) {
-              await StatementParser.checkDuplicates(
-                  _parsedEntries, _selectedWalletPk!);
-              setState(() {});
-            }
-          },
+          onPressed: _isProcessing
+              ? null
+              : () async {
+                  final wallet = wallets.firstWhereOrNull(
+                      (w) => w.walletPk == _selectedWalletPk);
+                  await BackupShareManager
+                      .purgeOnlyTransactionsWithConfirmation(
+                    context,
+                    targetWalletPk: _selectedWalletPk,
+                    targetWalletName: wallet?.name,
+                  );
+                  if (mounted &&
+                      _parsedEntries.isNotEmpty &&
+                      _selectedWalletPk != null) {
+                    await StatementParser.checkDuplicates(
+                        _parsedEntries, _selectedWalletPk!);
+                    setState(() {});
+                  }
+                },
         ),
         if (_parsedEntries.isNotEmpty)
           IconButton(
-            tooltip: "Import $selectedCount Selected",
-            icon: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                const Icon(Icons.download_done_rounded),
-                if (selectedCount > 0)
-                  Positioned(
-                    right: -4,
-                    top: -4,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 4, vertical: 1),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.primary,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      constraints:
-                          const BoxConstraints(minWidth: 14, minHeight: 14),
-                      child: Center(
-                        child: Text(
-                          selectedCount > 99 ? "99+" : "$selectedCount",
-                          style: TextStyle(
-                            color: Theme.of(context).colorScheme.onPrimary,
-                            fontSize: 9,
-                            fontWeight: FontWeight.bold,
+            tooltip: _isProcessing
+                ? "Importing..."
+                : "Import $selectedCount Selected",
+            icon: _isProcessing
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      const Icon(Icons.download_done_rounded),
+                      if (selectedCount > 0)
+                        Positioned(
+                          right: -4,
+                          top: -4,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 4, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).colorScheme.primary,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            constraints: const BoxConstraints(
+                                minWidth: 14, minHeight: 14),
+                            child: Center(
+                              child: Text(
+                                selectedCount > 99 ? "99+" : "$selectedCount",
+                                style: TextStyle(
+                                  color:
+                                      Theme.of(context).colorScheme.onPrimary,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
                           ),
                         ),
-                      ),
-                    ),
+                    ],
                   ),
-              ],
-            ),
-            onPressed: _commitImport,
+            onPressed: (_isProcessing || selectedCount == 0)
+                ? null
+                : _commitImport,
           ),
       ],
       floatingActionButton: _parsedEntries.isNotEmpty
@@ -1032,19 +1148,34 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                 ],
               ),
               child: FloatingActionButton.extended(
-                backgroundColor: Theme.of(context).colorScheme.primary,
+                backgroundColor: (_isProcessing || selectedCount == 0)
+                    ? Theme.of(context).colorScheme.primary.withOpacity(0.5)
+                    : Theme.of(context).colorScheme.primary,
                 foregroundColor: Theme.of(context).colorScheme.onPrimary,
                 elevation: 4,
-                icon: const Icon(Icons.download_done_rounded),
+                icon: _isProcessing
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.download_done_rounded),
                 label: TextFont(
-                  text: selectedCount > 0
-                      ? "Import ($selectedCount)"
-                      : "Import (0)",
+                  text: _isProcessing
+                      ? "Importing..."
+                      : selectedCount > 0
+                          ? "Import ($selectedCount)"
+                          : "Import (0)",
                   fontSize: 14,
                   fontWeight: FontWeight.bold,
                   textColor: Theme.of(context).colorScheme.onPrimary,
                 ),
-                onPressed: selectedCount > 0 ? _commitImport : null,
+                onPressed: (_isProcessing || selectedCount == 0)
+                    ? null
+                    : _commitImport,
               ),
             )
           : null,
@@ -1211,9 +1342,12 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                           ),
                           const SizedBox(width: 6),
                           Button(
-                            label: "Import ($selectedCount)",
+                            label: _isProcessing
+                                ? "Importing..."
+                                : "Import ($selectedCount)",
                             icon: Icons.download_done_rounded,
                             fontSize: 12,
+                            disabled: _isProcessing || selectedCount == 0,
                             padding: const EdgeInsetsDirectional.symmetric(
                                 horizontal: 10, vertical: 8),
                             color: Theme.of(context).colorScheme.primary,
@@ -1392,8 +1526,11 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
           Padding(
             padding: const EdgeInsets.all(16.0),
             child: Button(
-              label: "Import $selectedCount Transactions",
+              label: _isProcessing
+                  ? "Importing..."
+                  : "Import $selectedCount Transactions",
               icon: Icons.download_done_rounded,
+              disabled: _isProcessing || selectedCount == 0,
               color: Theme.of(context).colorScheme.primary,
               textColor: Theme.of(context).colorScheme.onPrimary,
               onTap: _commitImport,

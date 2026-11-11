@@ -648,4 +648,149 @@ class BackupShareManager {
       );
     }
   }
+
+  /// Scans the database for duplicate transactions, presents the findings to the user,
+  /// and safely deletes duplicate copies while preserving the earliest original entry.
+  static Future<void> findAndRemoveDuplicatesWithConfirmation(
+    BuildContext context, {
+    String? targetWalletPk,
+    String? targetWalletName,
+  }) async {
+    final isSpecificWallet =
+        targetWalletPk != null && targetWalletPk.isNotEmpty;
+    final accountDesc = isSpecificWallet
+        ? "in account '${targetWalletName ?? targetWalletPk}'"
+        : "across all accounts";
+
+    // 1. Fetch transactions
+    List<Transaction> txns;
+    if (isSpecificWallet) {
+      txns = await database.getAllTransactionsFromWallet(targetWalletPk);
+    } else {
+      txns = await database.allTransactions;
+    }
+
+    if (txns.isEmpty) {
+      if (!context.mounted) return;
+      openSnackbar(
+        SnackbarMessage(
+          title: "No Transactions Found",
+          description: "There are no transactions to check $accountDesc.",
+          icon: Icons.info_outline,
+        ),
+      );
+      return;
+    }
+
+    // Sort chronologically (earliest first so original is preserved)
+    txns.sort((a, b) => a.dateCreated.compareTo(b.dateCreated));
+
+    // 2. Identify duplicate groups
+    final List<String> duplicatePksToDelete = [];
+    final Set<String> processedPks = {};
+
+    for (int i = 0; i < txns.length; i++) {
+      final t1 = txns[i];
+      if (processedPks.contains(t1.transactionPk)) continue;
+
+      final t1DateOnly = DateTime(
+          t1.dateCreated.year, t1.dateCreated.month, t1.dateCreated.day);
+
+      for (int j = i + 1; j < txns.length; j++) {
+        final t2 = txns[j];
+        if (processedPks.contains(t2.transactionPk)) continue;
+
+        // Must be in same wallet and same type (income/expense)
+        if (t1.walletFk != t2.walletFk || t1.income != t2.income) continue;
+
+        // Amount must match
+        if ((t1.amount.abs() - t2.amount.abs()).abs() >= 0.01) continue;
+
+        // Date check: identical calendar day or within 1 day
+        final t2DateOnly = DateTime(
+            t2.dateCreated.year, t2.dateCreated.month, t2.dateCreated.day);
+        final diffDays = t1DateOnly.difference(t2DateOnly).inDays.abs();
+        if (diffDays > 1) continue;
+
+        final name1 = t1.name.toLowerCase().trim();
+        final name2 = t2.name.toLowerCase().trim();
+        final note1 = t1.note.toLowerCase().trim();
+        final note2 = t2.note.toLowerCase().trim();
+
+        bool isDuplicate = false;
+
+        // Exact match on name or note
+        if (name1 == name2 && (diffDays == 0 || note1 == note2)) {
+          isDuplicate = true;
+        } else if (name1.contains(name2) || name2.contains(name1)) {
+          isDuplicate = true;
+        } else if (note1.isNotEmpty &&
+            note2.isNotEmpty &&
+            (note1 == note2 || note1.contains(note2) || note2.contains(note1))) {
+          isDuplicate = true;
+        }
+
+        if (isDuplicate) {
+          // Keep t1 as the original, mark t2 for deletion
+          processedPks.add(t2.transactionPk);
+          duplicatePksToDelete.add(t2.transactionPk);
+        }
+      }
+    }
+
+    if (duplicatePksToDelete.isEmpty) {
+      if (!context.mounted) return;
+      openSnackbar(
+        SnackbarMessage(
+          title: "No Duplicates Found",
+          description: "All transactions $accountDesc are unique.",
+          icon: Icons.check_circle_outline_rounded,
+        ),
+      );
+      return;
+    }
+
+    if (!context.mounted) return;
+
+    final confirm = await openPopup(
+      context,
+      icon: Icons.find_replace_rounded,
+      title: "Remove ${duplicatePksToDelete.length} Duplicates?",
+      description:
+          "Found ${duplicatePksToDelete.length} duplicate transactions $accountDesc.\n\nCashew will keep the earliest original entry for each transaction and delete only the duplicate copies.\n\nProceed to remove duplicates?",
+      onCancelLabel: "Cancel",
+      onSubmitLabel: "Delete Duplicates",
+      onSubmit: () => popRoute(context, true),
+      onCancel: () => popRoute(context, false),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      final deleted = await (database.delete(database.transactions)
+            ..where((t) => t.transactionPk.isIn(duplicatePksToDelete)))
+          .go();
+
+      if (!context.mounted) return;
+      openSnackbar(
+        SnackbarMessage(
+          title: "Duplicates Removed",
+          description: "Successfully deleted $deleted duplicate transactions.",
+          icon: Icons.check_circle_outline_rounded,
+        ),
+      );
+
+      // Refresh home and navigation state
+      homePageStateKey.currentState?.refreshState();
+    } catch (e) {
+      if (!context.mounted) return;
+      openSnackbar(
+        SnackbarMessage(
+          title: "Error Deleting Duplicates",
+          description: e.toString(),
+          icon: Icons.error_outline,
+        ),
+      );
+    }
+  }
 }

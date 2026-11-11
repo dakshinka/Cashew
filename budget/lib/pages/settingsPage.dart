@@ -756,6 +756,17 @@ class SettingsPageContent extends StatelessWidget {
 
         SettingsContainer(
           onTap: () async {
+            await BackupShareManager.findAndRemoveDuplicatesWithConfirmation(
+                context);
+          },
+          icon: Icons.find_replace_rounded,
+          title: "Clean Duplicate Transactions",
+          description:
+              "Scan all accounts for identical or duplicate entries and safely delete the copies.",
+        ),
+
+        SettingsContainer(
+          onTap: () async {
             await BackupShareManager.purgeOnlyTransactionsWithConfirmation(
                 context);
           },

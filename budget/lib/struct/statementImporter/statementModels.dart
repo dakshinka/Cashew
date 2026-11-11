@@ -9,7 +9,7 @@ enum DuplicateState {
 }
 
 class StatementEntry {
-  final String id;
+  String id;
   DateTime date;
   String rawNarration;
   String cleanMerchant;
