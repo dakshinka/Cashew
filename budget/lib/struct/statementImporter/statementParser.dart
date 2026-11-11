@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:excel/excel.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
+import 'package:universal_html/parsing.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/smsReview/aiCategorizer.dart';
 import 'package:budget/struct/smsReview/reviewManager.dart';
@@ -222,12 +223,14 @@ class StatementParser {
         customIndices: customIndices, targetWalletPk: targetWalletPk);
   }
 
-  /// Parses binary Excel (.xlsx / .xls) spreadsheet bytes
+  /// Parses Excel (.xlsx / .xls) spreadsheet bytes, supporting OpenXML (.xlsx),
+  /// HTML table statements (.xls), XML Spreadsheet 2003, and binary BIFF8 statements.
   static Future<List<StatementEntry>> parseExcelBytes(
     List<int> bytes, {
     StatementColumnIndices? customIndices,
     String? targetWalletPk,
   }) async {
+    // 1. Try standard OpenXML .xlsx via pure-Dart Excel library
     try {
       final excel = Excel.decodeBytes(bytes);
       List<List<dynamic>> rows = [];
@@ -246,9 +249,137 @@ class StatementParser {
             customIndices: customIndices, targetWalletPk: targetWalletPk);
       }
     } catch (e) {
-      debugPrint("Error parsing Excel bytes: $e");
+      debugPrint("OpenXML decode skipped, trying .xls HTML/XML/binary parser: $e");
     }
+
+    // 2. Most bank .xls exports (e.g. SBI, HDFC, ICICI, Axis) are HTML tables or XML Spreadsheets
+    String textContent = "";
+    try {
+      textContent = utf8.decode(bytes);
+    } catch (_) {
+      try {
+        textContent = latin1.decode(bytes);
+      } catch (_) {}
+    }
+
+    if (textContent.isNotEmpty) {
+      // 2a. HTML Table saved with .xls extension
+      if (textContent.contains("<table") ||
+          textContent.contains("<TABLE") ||
+          textContent.contains("<html") ||
+          textContent.contains("<HTML") ||
+          textContent.contains("<tr") ||
+          textContent.contains("<TR")) {
+        try {
+          final doc = parseHtmlDocument(textContent);
+          final tables = doc.querySelectorAll('table');
+          for (final table in tables) {
+            final trs = table.querySelectorAll('tr');
+            if (trs.length >= 2) {
+              final List<List<dynamic>> htmlRows = [];
+              for (final tr in trs) {
+                final cells = tr.querySelectorAll('th, td');
+                if (cells.isNotEmpty) {
+                  htmlRows.add(
+                      cells.map((c) => c.text?.trim() ?? "").toList());
+                }
+              }
+              if (htmlRows.length >= 2) {
+                return await parseRows(htmlRows,
+                    customIndices: customIndices,
+                    targetWalletPk: targetWalletPk);
+              }
+            }
+          }
+        } catch (htmlErr) {
+          debugPrint("HTML .xls table parsing error: $htmlErr");
+        }
+      }
+
+      // 2b. XML Spreadsheet 2003 (<Workbook ... <Row><Cell><Data>...)
+      if (textContent.contains("<Row") || textContent.contains("<row")) {
+        try {
+          final rowMatches = RegExp(r'<Row[^>]*>(.*?)</Row>',
+                  dotAll: true, caseSensitive: false)
+              .allMatches(textContent);
+          if (rowMatches.isNotEmpty) {
+            final List<List<dynamic>> xmlRows = [];
+            for (final rm in rowMatches) {
+              final rowInner = rm.group(1) ?? "";
+              final cellMatches = RegExp(
+                      r'<Cell[^>]*>.*?<Data[^>]*>(.*?)</Data>.*?</Cell>',
+                      dotAll: true,
+                      caseSensitive: false)
+                  .allMatches(rowInner);
+              final rowList = cellMatches
+                  .map((cm) => (cm.group(1) ?? "")
+                      .replaceAll(RegExp(r'<[^>]*>'), '')
+                      .trim())
+                  .toList();
+              if (rowList.isNotEmpty) {
+                xmlRows.add(rowList);
+              }
+            }
+            if (xmlRows.length >= 2) {
+              return await parseRows(xmlRows,
+                  customIndices: customIndices,
+                  targetWalletPk: targetWalletPk);
+            }
+          }
+        } catch (xmlErr) {
+          debugPrint("XML Spreadsheet .xls parsing error: $xmlErr");
+        }
+      }
+
+      // 2c. Delimited text (CSV / TSV) saved with .xls extension
+      if (textContent.contains(",") || textContent.contains("\t")) {
+        try {
+          final csvEntries = await parseCsv(textContent,
+              customIndices: customIndices, targetWalletPk: targetWalletPk);
+          if (csvEntries.isNotEmpty) return csvEntries;
+        } catch (_) {}
+      }
+    }
+
+    // 3. Binary OLE2 / BIFF8 (.xls) file fallback
+    try {
+      final binaryText = _extractTextFromBinaryXls(bytes);
+      if (binaryText.isNotEmpty) {
+        final entries = await parsePdfTextLines(binaryText,
+            targetWalletPk: targetWalletPk);
+        if (entries.isNotEmpty) return entries;
+        return await parseStatementWithAi(binaryText,
+            targetWalletPk: targetWalletPk);
+      }
+    } catch (biffErr) {
+      debugPrint("Binary .xls extraction error: $biffErr");
+    }
+
     return [];
+  }
+
+  /// Extracts readable ASCII / Unicode text strings from binary OLE2 / BIFF8 (.xls) files
+  static String _extractTextFromBinaryXls(List<int> bytes) {
+    final buffer = StringBuffer();
+    int i = 0;
+    while (i < bytes.length) {
+      int start = i;
+      while (i < bytes.length && bytes[i] >= 32 && bytes[i] <= 126) {
+        i++;
+      }
+      final len = i - start;
+      if (len >= 3) {
+        final str = String.fromCharCodes(bytes.sublist(start, i)).trim();
+        if (str.isNotEmpty &&
+            !str.startsWith("Root Entry") &&
+            !str.startsWith("Workbook") &&
+            !str.startsWith("Current User")) {
+          buffer.writeln(str);
+        }
+      }
+      i++;
+    }
+    return buffer.toString();
   }
 
   /// Parses digital PDF statement bytes (bank and credit card statements)
