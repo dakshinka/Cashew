@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:easy_localization/easy_localization.dart' hide TextDirection;
 import 'package:provider/provider.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:convert';
-import 'dart:io';
+import 'package:budget/struct/platformFileUtil/platformFileUtil.dart';
 import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
 import 'package:collection/collection.dart';
@@ -345,7 +346,7 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
       if (kIsWeb) {
         bytes = file.bytes;
       } else if (file.path != null) {
-        bytes = await File(file.path!).readAsBytes();
+        bytes = await readFileBytesFromPath(file.path!);
       }
 
       if (bytes == null || bytes.isEmpty) {
@@ -578,7 +579,7 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                   children: [
                     Expanded(
                       child: Button(
-                        label: "Cancel",
+                        label: "cancel".tr(),
                         color: getColor(sheetContext, "canvasContainer"),
                         textColor: getColor(sheetContext, "black"),
                         onTap: () => Navigator.of(sheetContext).pop(),
@@ -743,7 +744,7 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
               children: [
                 Expanded(
                   child: Button(
-                    label: "Cancel",
+                    label: "cancel".tr(),
                     color: getColor(context, "canvasContainer"),
                     textColor: getColor(context, "black"),
                     onTap: () => Navigator.of(context).pop(),
@@ -1697,7 +1698,7 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
     final selectedCount = _parsedEntries.where((e) => e.isSelected).length;
 
     return PageFramework(
-      title: "Bank Statement Importer",
+      title: "Bank Statement Importer".tr(),
       actions: [
         IconButton(
           tooltip: "Paste CSV",
@@ -2014,7 +2015,7 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
               Expanded(
                 flex: 3,
                 child: Button(
-                  label: "Upload Statement",
+                  label: "Upload Statement".tr(),
                   icon: Icons.upload_file_rounded,
                   color: Theme.of(context).colorScheme.primary,
                   textColor: Theme.of(context).colorScheme.onPrimary,
@@ -2025,7 +2026,7 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
               Expanded(
                 flex: 2,
                 child: Button(
-                  label: "Try Sample",
+                  label: "Try Sample".tr(),
                   icon: Icons.auto_awesome_rounded,
                   color: getColor(context, "dividerColor").withOpacity(0.2),
                   textColor: getColor(context, "black"),

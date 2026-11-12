@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'dart:io';
+import 'package:budget/struct/platformFileUtil/platformFileUtil.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
@@ -142,8 +142,7 @@ class BackupShareManager {
       } else {
         final path = result.files.single.path;
         if (path == null) return;
-        final file = File(path);
-        fileContent = await file.readAsString();
+        fileContent = await readFileStringFromPath(path);
       }
 
       final Map<String, dynamic> decoded = jsonDecode(fileContent);

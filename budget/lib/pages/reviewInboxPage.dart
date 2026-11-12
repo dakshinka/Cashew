@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:easy_localization/easy_localization.dart' hide TextDirection;
 import 'package:intl/intl.dart';
 import 'package:collection/collection.dart';
 import 'package:notification_listener_service/notification_listener_service.dart';
@@ -2112,7 +2113,7 @@ class _ReviewInboxPageState extends State<ReviewInboxPage> {
     final ignored = ReviewManager.instance.ignoredMessages;
 
     return PageFramework(
-      title: "Review Inbox",
+      title: "Review Inbox".tr(),
       actions: [
         IconButton(
           tooltip: "AI Model Settings (Gemini / Llama)",

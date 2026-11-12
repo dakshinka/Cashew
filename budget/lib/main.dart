@@ -38,7 +38,7 @@ import 'package:easy_localization/easy_localization.dart';
 
 // Requires hot restart when changed
 bool enableDevicePreview = false;
-bool allowDebugFlags = true;
+bool allowDebugFlags = kDebugMode || kEnableDebugPageInRelease;
 bool allowDangerousDebugFlags = kDebugMode;
 
 void main() async {

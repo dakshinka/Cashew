@@ -247,7 +247,38 @@ Note: required Firebase.
 6. Generate step-by-step migrations
    - Run `dart run drift_dev schema steps drift_schemas/ lib\database\schema_versions.dart`
 7. Implement migration strategy
-   - Edit `await stepByStep(...)` function in `tables.dart` and add the migration strategy for the new version migration
+   - Edit `migrator.runMigrationSteps(...)` in `tables.dart` and add the migration strategy for the new version migration
+
+### Fork Subsystems & Architecture
+
+This fork incorporates custom financial modules engineered for stability, offline reliability, and data privacy:
+
+#### 1. Bank Statement Importer (`lib/struct/statementImporter/`)
+- Multi-format ingestion supporting CSV, TSV, and encrypted/unencrypted PDF statements.
+- Automated column mapping, debit/credit polarity detection, and OCR fallback heuristics.
+- Type-safe auto-matching that validates account compatibility (e.g. credit card statements only match credit-enabled wallets) and guards against false-positive digit matching (e.g. calendar years).
+
+#### 2. SMS & Notification Review Inbox (`lib/struct/smsReview/`)
+- Local rule-based classifier with regex word boundaries (`\b`) preventing common word collisions with bank abbreviations.
+- Optional offline or private LLM assistance (Gemini, Groq, OpenRouter, Ollama) with strict 15-second network timeouts.
+- In-memory diagnostic logs for inspecting parsing accuracy without transmitting SMS data.
+
+#### 3. Credit Card Billing Tracker (`lib/struct/creditCard/`)
+- Tracks billing cycles, statement generation dates, due dates, and grace periods.
+- Full reconciliation between imported statement totals and active database transactions.
+
+#### 4. Safe Backup & Persistence Architecture (`lib/struct/backupShare/`)
+- Complete backup bundles: serializes SQLite database data together with non-SQLite preferences (credit card configs, loan terms, and learned statement templates) into `AppSetting.settingsJSON`.
+- Database restore safety: validates the 16-byte SQLite magic header (`SQLite format 3\000`), takes an automatic pre-restore backup snapshot (`db.sqlite.pre_restore_backup`), and closes live database executors prior to file replacement.
+- Offline auto-backups: rolling local backups to `backups/cashew-auto-<date>.sqlite` with a 7-day retention limit when not signed into Google.
+
+#### 5. Local Device Sync (`lib/struct/localSync/`)
+- Peer-to-peer sync engine with Last-Write-Wins (LWW) conflict resolution using `dateTimeModified` timestamps.
+- Hardened server security: constant-time XOR token verification, token transmission restricted to HTTP headers, and 25 MB stream caps on chunked payloads.
+
+#### 6. Cross-Platform Abstractions & Config-as-Code
+- Web platform safety: uses conditional exports (`export ... if (dart.library.io)`) in `lib/struct/platformFileUtil/` and `lib/struct/localSync/` to ensure full web/PWA target compatibility.
+- Config-as-code feature flags: `kUnlockAllPro` and `kEnableDebugPageInRelease` in `lib/struct/settings.dart` govern fork behaviors cleanly in one place.
 
 ### Get Platform
 

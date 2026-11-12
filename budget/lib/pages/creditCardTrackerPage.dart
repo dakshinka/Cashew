@@ -1,4 +1,5 @@
 import 'package:collection/collection.dart';
+import 'package:easy_localization/easy_localization.dart' hide TextDirection;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:budget/colors.dart';
@@ -77,7 +78,7 @@ class _CreditCardTrackerPageState extends State<CreditCardTrackerPage> {
 
     openPopup(
       context,
-      title: "Credit Card Billing Settings",
+      title: "Credit Card Billing Settings".tr(),
       description:
           "Configure billing cycle, grace period, interest rates, and shared credit limits:",
       onSubmitLabel: "Save Settings",

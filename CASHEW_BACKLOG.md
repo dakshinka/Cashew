@@ -56,16 +56,23 @@ This backlog synthesizes and tracks findings and recommendations from repository
   - Tracked and reported accurate `inserted`, `updated`, and `skipped` counts.
   - Hardened local sync server against timing attacks with constant-time token comparison, stopped accepting tokens in URL query strings, and protected chunked payloads with running byte counters up to 25 MB.
 
+- [x] **Config-as-Code Cleanups (Review 1, Item 5 & Review 2, Item J)**:
+  - Exposed explicit `kUnlockAllPro` and `kEnableDebugPageInRelease` configuration constants in `settings.dart` and `main.dart`, replacing buried magic strings.
+- [x] **Pure Function Unit Tests & Dev Dependencies (Review 1, Item 8)**:
+  - Added `flutter_test` to `pubspec.yaml` `dev_dependencies`.
+  - Created `budget/test/pure_functions_test.dart` testing `StatementParser.parseAmount`, `StatementParser.parseFlexibleDate`, `ReviewManager.extractBankBrand` word boundary assertions, and `isValidSqliteHeader`.
+  - Added clean smoke test in `budget/test/widget_test.dart`.
+- [x] **Platform Isolation & dart:io Web Guards (Review 1, Item 10)**:
+  - Created conditional export abstraction `platformFileUtil.dart` (`platformFileUtilNative.dart` / `platformFileUtilWeb.dart`).
+  - Removed direct `dart:io` imports from `statementImporterPage.dart` and `backupShareManager.dart` for web compatibility.
+- [x] **UI Internationalization Sweep for Fork Screens (Review 1, Item 9)**:
+  - Added `easy_localization` support and `.tr()` tags to user-facing strings across `statementImporterPage.dart`, `reviewInboxPage.dart`, and `creditCardTrackerPage.dart`.
+- [x] **Developer Documentation & README Architecture (Review 1, DEV-5)**:
+  - Fixed database migration command in `README.md` (`migrator.runMigrationSteps(...)`).
+  - Added comprehensive architectural documentation for statement importer, SMS review, credit card tracking, local sync, safe backups, and config-as-code.
+
 ---
 
 ## 📋 Open Backlog Items
 
-### Tier 3 — Enhancements & Maintenance (Low / Optional)
-
-1. **Config-as-Code Cleanups (Review 1, Item 5 & Review 2, Item J)**
-   - Expose explicit `const bool kUnlockAllPro = true;` flag in `main.dart`.
-2. **Pure Function Unit Tests (Review 1, Item 8)**
-   - Add unit tests for `statementParser.dart` (`parseAmount`, date parsing) and `reviewManager.dart`.
-3. **UI Internationalization Sweep for Fork Screens (Review 1, Item 9)**
-   - Add `.tr()` localization tags to `statementImporterPage`, `reviewInboxPage`, and `creditCardTrackerPage`.
-   - Add `.tr()` localization tags to `statementImporterPage`, `reviewInboxPage`, and `creditCardTrackerPage`.
+**All identified items from `cashew_review.md` and `cashew_review_2.md` are 100% completed and resolved.**

@@ -23,6 +23,15 @@ import 'package:easy_localization/easy_localization.dart';
 import 'package:budget/widgets/framework/popupFramework.dart';
 import 'package:budget/pages/activityPage.dart';
 
+// ============================================================================
+// Fork Configuration Flags (Config-as-Code)
+// ============================================================================
+/// When true, unlocks all Cashew Pro Lifetime features across the app.
+const bool kUnlockAllPro = true;
+
+/// When true, allows accessing the Debug Page in release builds via long-press in About.
+const bool kEnableDebugPageInRelease = true;
+
 Map<String, dynamic> appStateSettings = {};
 bool isDatabaseCorrupted = false;
 String databaseCorruptedError = "";
@@ -87,8 +96,10 @@ Future<bool> initializeSettings() async {
   }
 
   appStateSettings = userSettings;
-  // Always enable Cashew Pro Lifetime with all features unlocked
-  appStateSettings["purchaseID"] = "cashew.pro.lifetime";
+  // Unlock Pro features according to config-as-code flag
+  if (kUnlockAllPro) {
+    appStateSettings["purchaseID"] = "cashew.pro.lifetime";
+  }
   print(
       "App settings loaded: if logging is enabled, logs will now be captured");
 

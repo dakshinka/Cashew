@@ -972,6 +972,9 @@ class ReviewManager {
     return null;
   }
 
+  @visibleForTesting
+  static String? extractBankBrand(String str) => _extractBankBrand(str);
+
   static String? _extractBankBrand(String str) {
     final lower = str.toLowerCase();
     if (RegExp(r'\bhdfc\b').hasMatch(lower)) return "hdfc";

@@ -206,7 +206,7 @@ Future<Map<String, dynamic>> getDefaultPreferences() async {
     "premiumPopupAddTransactionLastShown": DateTime.now().toString(),
     "premiumPopupFreeSeen": false,
     "previewDemo": false,
-    "purchaseID": "cashew.pro.lifetime",
+    "purchaseID": kUnlockAllPro ? "cashew.pro.lifetime" : null,
     "showAccountLabelTagInTransactionEntry": false,
     "showCurrencyLabel": false,
     "showTransactionsMonthlySpendingSummary": true,
