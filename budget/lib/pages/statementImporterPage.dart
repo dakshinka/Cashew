@@ -1351,6 +1351,19 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
               currentConfig.lastStatementFinanceCharges,
           lastStatementGst: _creditCardSummary!.gstCharges ??
               currentConfig.lastStatementGst,
+          previousStatementDue: _creditCardSummary!.previousStatementDue ??
+              currentConfig.previousStatementDue,
+          lastStatementPayments: _creditCardSummary!.paymentsReceived ??
+              currentConfig.lastStatementPayments,
+          lastStatementPurchases: _creditCardSummary!.purchasesCurrentCycle ??
+              currentConfig.lastStatementPurchases,
+          availableCreditLimit: _creditCardSummary!.availableCreditLimit ??
+              currentConfig.availableCreditLimit,
+          availableCashLimit: _creditCardSummary!.availableCashLimit ??
+              currentConfig.availableCashLimit,
+          cardLast4: _creditCardSummary!.cardLast4 ?? currentConfig.cardLast4,
+          billingPeriod:
+              _creditCardSummary!.billingPeriod ?? currentConfig.billingPeriod,
         );
         await CreditCardManager.instance.saveConfig(updatedConfig);
       }
@@ -2099,17 +2112,49 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      TextFont(
-                        text: "Credit Card Billing Statement Details",
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
-                        textColor:
-                            Theme.of(context).colorScheme.onPrimaryContainer,
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextFont(
+                              text: s.cardName != null
+                                  ? "${s.cardName}${s.cardLast4 != null ? ' (•••• ${s.cardLast4})' : ''}"
+                                  : "Credit Card Billing Statement Details",
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                              textColor: Theme.of(context)
+                                  .colorScheme
+                                  .onPrimaryContainer,
+                            ),
+                          ),
+                        ],
                       ),
-                      TextFont(
-                        text: "Extracted from official statement",
-                        fontSize: 11,
-                        textColor: getColor(context, "textLight"),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 1.5),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .primary
+                                  .withOpacity(0.12),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: TextFont(
+                              text: s.extractedVia?.startsWith("template:") ==
+                                      true
+                                  ? "⚡ Programmatic Template (${s.extractedVia!.replaceFirst('template:', '')})"
+                                  : (s.extractedVia?.startsWith("llm:") == true
+                                      ? "🧠 AI Learned Template"
+                                      : "Extracted from official statement"),
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              textColor:
+                                  Theme.of(context).colorScheme.primary,
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -2153,6 +2198,28 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                       if (s.gstCharges != null) {
                         config.lastStatementGst = s.gstCharges!;
                       }
+                      if (s.previousStatementDue != null) {
+                        config.previousStatementDue = s.previousStatementDue!;
+                      }
+                      if (s.paymentsReceived != null) {
+                        config.lastStatementPayments = s.paymentsReceived!;
+                      }
+                      if (s.purchasesCurrentCycle != null) {
+                        config.lastStatementPurchases =
+                            s.purchasesCurrentCycle!;
+                      }
+                      if (s.availableCreditLimit != null) {
+                        config.availableCreditLimit = s.availableCreditLimit;
+                      }
+                      if (s.availableCashLimit != null) {
+                        config.availableCashLimit = s.availableCashLimit;
+                      }
+                      if (s.cardLast4 != null) {
+                        config.cardLast4 = s.cardLast4;
+                      }
+                      if (s.billingPeriod != null) {
+                        config.billingPeriod = s.billingPeriod;
+                      }
                       config.isEnabled = true;
                       await CreditCardManager.instance.saveConfig(config);
                       openSnackbar(
@@ -2167,6 +2234,14 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                   ),
               ],
             ),
+            if (s.billingPeriod != null) ...[
+              const SizedBox(height: 8),
+              TextFont(
+                text: "Billing Period: ${s.billingPeriod}",
+                fontSize: 11.5,
+                textColor: getColor(context, "textLight"),
+              ),
+            ],
             const SizedBox(height: 12),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -2223,7 +2298,7 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                         ),
                         TextFont(
                           text: totalDueStr,
-                          fontSize: 15,
+                          fontSize: 16,
                           fontWeight: FontWeight.bold,
                         ),
                       ],
@@ -2247,22 +2322,181 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                 ],
               ),
             ],
-            if (s.creditLimit != null && s.creditLimit! > 0) ...[
-              const SizedBox(height: 8),
+            // Statement Summary Metrics (Previous Dues, Payments, Purchases, Charges)
+            if (s.previousStatementDue != null ||
+                s.paymentsReceived != null ||
+                s.purchasesCurrentCycle != null) ...[
+              const Divider(height: 20),
+              TextFont(
+                text: "Statement Cycle Accounting",
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+                textColor: getColor(context, "textLight"),
+              ),
+              const SizedBox(height: 6),
+              if (s.previousStatementDue != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2.0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      TextFont(
+                        text: "Previous Statement Due:",
+                        fontSize: 12,
+                        textColor: getColor(context, "textLight"),
+                      ),
+                      TextFont(
+                        text:
+                            "$currency${s.previousStatementDue!.toStringAsFixed(2)}",
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ],
+                  ),
+                ),
+              if (s.paymentsReceived != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2.0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      TextFont(
+                        text: "Payments / Credits Received:",
+                        fontSize: 12,
+                        textColor: Colors.green.shade800,
+                      ),
+                      TextFont(
+                        text:
+                            "- $currency${s.paymentsReceived!.toStringAsFixed(2)}",
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.bold,
+                        textColor: Colors.green.shade800,
+                      ),
+                    ],
+                  ),
+                ),
+              if (s.purchasesCurrentCycle != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2.0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      TextFont(
+                        text: "Purchases / Debits (Current Cycle):",
+                        fontSize: 12,
+                        textColor: getColor(context, "textLight"),
+                      ),
+                      TextFont(
+                        text:
+                            "+ $currency${s.purchasesCurrentCycle!.toStringAsFixed(2)}",
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ],
+                  ),
+                ),
+              if (s.financeCharges != null && s.financeCharges! > 0)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2.0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      TextFont(
+                        text: "Finance Charges:",
+                        fontSize: 12,
+                        textColor: Colors.red.shade700,
+                      ),
+                      TextFont(
+                        text:
+                            "+ $currency${s.financeCharges!.toStringAsFixed(2)}",
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        textColor: Colors.red.shade700,
+                      ),
+                    ],
+                  ),
+                ),
+              if (s.gstCharges != null && s.gstCharges! > 0)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2.0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      TextFont(
+                        text: "GST / Taxes on Charges:",
+                        fontSize: 12,
+                        textColor: Colors.red.shade700,
+                      ),
+                      TextFont(
+                        text: "+ $currency${s.gstCharges!.toStringAsFixed(2)}",
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        textColor: Colors.red.shade700,
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+            // Credit Limits & Available Balances
+            if (s.totalCreditLimit != null ||
+                s.availableCreditLimit != null ||
+                s.availableCashLimit != null) ...[
+              const Divider(height: 20),
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  TextFont(
-                    text: "Card Credit Limit:",
-                    fontSize: 12,
-                    textColor: getColor(context, "textLight"),
-                  ),
-                  TextFont(
-                    text: "$currency${s.creditLimit!.toStringAsFixed(0)}",
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                    textColor: Theme.of(context).colorScheme.primary,
-                  ),
+                  if (s.totalCreditLimit != null)
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        TextFont(
+                          text: "Total Limit:",
+                          fontSize: 10.5,
+                          textColor: getColor(context, "textLight"),
+                        ),
+                        TextFont(
+                          text:
+                              "$currency${s.totalCreditLimit!.toStringAsFixed(0)}",
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ],
+                    ),
+                  if (s.availableCreditLimit != null)
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        TextFont(
+                          text: "Available Credit:",
+                          fontSize: 10.5,
+                          textColor: getColor(context, "textLight"),
+                        ),
+                        TextFont(
+                          text:
+                              "$currency${s.availableCreditLimit!.toStringAsFixed(0)}",
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                          textColor: Colors.green.shade800,
+                        ),
+                      ],
+                    ),
+                  if (s.availableCashLimit != null)
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        TextFont(
+                          text: "Cash Limit:",
+                          fontSize: 10.5,
+                          textColor: getColor(context, "textLight"),
+                        ),
+                        TextFont(
+                          text:
+                              "$currency${s.availableCashLimit!.toStringAsFixed(0)}",
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ],
+                    ),
                 ],
               ),
             ],

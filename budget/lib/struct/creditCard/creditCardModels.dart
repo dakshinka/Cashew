@@ -19,6 +19,13 @@ class CreditCardConfig {
   DateTime? lastPaymentDueDate; // e.g. 2026-11-09
   double lastStatementFinanceCharges; // Finance charges reported on statement
   double lastStatementGst; // GST / Taxes reported on statement
+  double previousStatementDue; // Prior cycle statement due
+  double lastStatementPayments; // Payments & credits received in statement
+  double lastStatementPurchases; // Debits / spends in billing cycle
+  double? availableCreditLimit; // Bank reported available credit
+  double? availableCashLimit; // Bank reported available cash
+  String? cardLast4; // Card last 4 digits
+  String? billingPeriod; // Statement billing range
 
   CreditCardConfig({
     required this.walletPk,
@@ -36,6 +43,13 @@ class CreditCardConfig {
     this.lastPaymentDueDate,
     this.lastStatementFinanceCharges = 0.0,
     this.lastStatementGst = 0.0,
+    this.previousStatementDue = 0.0,
+    this.lastStatementPayments = 0.0,
+    this.lastStatementPurchases = 0.0,
+    this.availableCreditLimit,
+    this.availableCashLimit,
+    this.cardLast4,
+    this.billingPeriod,
   });
 
   bool get isSharedLimit =>
@@ -85,6 +99,13 @@ class CreditCardConfig {
         'lastPaymentDueDate': lastPaymentDueDate?.toIso8601String(),
         'lastStatementFinanceCharges': lastStatementFinanceCharges,
         'lastStatementGst': lastStatementGst,
+        'previousStatementDue': previousStatementDue,
+        'lastStatementPayments': lastStatementPayments,
+        'lastStatementPurchases': lastStatementPurchases,
+        'availableCreditLimit': availableCreditLimit,
+        'availableCashLimit': availableCashLimit,
+        'cardLast4': cardLast4,
+        'billingPeriod': billingPeriod,
       };
 
   factory CreditCardConfig.fromJson(Map<String, dynamic> json) =>
@@ -114,6 +135,17 @@ class CreditCardConfig {
             (json['lastStatementFinanceCharges'] as num?)?.toDouble() ?? 0.0,
         lastStatementGst:
             (json['lastStatementGst'] as num?)?.toDouble() ?? 0.0,
+        previousStatementDue:
+            (json['previousStatementDue'] as num?)?.toDouble() ?? 0.0,
+        lastStatementPayments:
+            (json['lastStatementPayments'] as num?)?.toDouble() ?? 0.0,
+        lastStatementPurchases:
+            (json['lastStatementPurchases'] as num?)?.toDouble() ?? 0.0,
+        availableCreditLimit:
+            (json['availableCreditLimit'] as num?)?.toDouble(),
+        availableCashLimit: (json['availableCashLimit'] as num?)?.toDouble(),
+        cardLast4: json['cardLast4'] as String?,
+        billingPeriod: json['billingPeriod'] as String?,
       );
 
   CreditCardConfig copyWith({
@@ -132,6 +164,13 @@ class CreditCardConfig {
     DateTime? lastPaymentDueDate,
     double? lastStatementFinanceCharges,
     double? lastStatementGst,
+    double? previousStatementDue,
+    double? lastStatementPayments,
+    double? lastStatementPurchases,
+    double? availableCreditLimit,
+    double? availableCashLimit,
+    String? cardLast4,
+    String? billingPeriod,
   }) {
     return CreditCardConfig(
       walletPk: walletPk ?? this.walletPk,
@@ -150,6 +189,15 @@ class CreditCardConfig {
       lastStatementFinanceCharges:
           lastStatementFinanceCharges ?? this.lastStatementFinanceCharges,
       lastStatementGst: lastStatementGst ?? this.lastStatementGst,
+      previousStatementDue: previousStatementDue ?? this.previousStatementDue,
+      lastStatementPayments:
+          lastStatementPayments ?? this.lastStatementPayments,
+      lastStatementPurchases:
+          lastStatementPurchases ?? this.lastStatementPurchases,
+      availableCreditLimit: availableCreditLimit ?? this.availableCreditLimit,
+      availableCashLimit: availableCashLimit ?? this.availableCashLimit,
+      cardLast4: cardLast4 ?? this.cardLast4,
+      billingPeriod: billingPeriod ?? this.billingPeriod,
     );
   }
 }

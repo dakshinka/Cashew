@@ -10,6 +10,7 @@ import 'package:budget/struct/smsReview/reviewManager.dart';
 import 'package:budget/struct/smsReview/llmClassifier.dart';
 import 'package:budget/struct/smsReview/smsParser.dart';
 import 'package:budget/struct/statementImporter/statementModels.dart';
+import 'package:budget/struct/statementImporter/statementTemplate.dart';
 import 'package:budget/struct/statementImporter/biff8Parser.dart';
 import 'package:csv/csv.dart';
 import 'package:intl/intl.dart';
@@ -29,6 +30,14 @@ class StatementParser {
 
   /// Extracts credit card statement metadata (Statement date, due date, total due, interest charges, EMIs)
   static CreditCardStatementSummary extractCreditCardSummary(String fullText) {
+    // 1. First priority: Check registered statement templates (built-in + learned from LLM)
+    final templateSummary =
+        StatementTemplateManager.instance.extractWithTemplates(fullText);
+    if (templateSummary != null && templateSummary.totalAmountDue != null) {
+      lastExtractedSummary = templateSummary;
+      return templateSummary;
+    }
+
     DateTime? statementDate;
     final stmtDateMatch = RegExp(
       r'(?:statement|billing)\s*date\s*[:\-]?\s*([0-3]?[0-9][\/\-.][0-1]?[0-9][\/\-.][0-9]{2,4}|[0-3]?[0-9]\s+[A-Za-z]{3}\s+[0-9]{2,4}|[0-3]?[0-9]-[A-Za-z]{3}-[0-9]{2,4})',
@@ -49,7 +58,7 @@ class StatementParser {
 
     double? totalDue;
     final totalDueMatch = RegExp(
-      r'total\s*amount\s*due\s*[:\-]?\s*(?:rs\.?|inr|₹)?\s*([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{2})?)',
+      r'total\s*amount\s*due\s*[:\-]?\s*[C₹Rs\.INR]*\s*([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{2})?)',
       caseSensitive: false,
     ).firstMatch(fullText);
     if (totalDueMatch != null) {
@@ -58,7 +67,7 @@ class StatementParser {
 
     double? minDue;
     final minDueMatch = RegExp(
-      r'(?:minimum|min\.?)\s*amount\s*due\s*[:\-]?\s*(?:rs\.?|inr|₹)?\s*([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{2})?)',
+      r'(?:minimum|min\.?)\s*(?:amount\s*)?dues?\s*[:\-]?\s*[C₹Rs\.INR]*\s*([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{2})?)',
       caseSensitive: false,
     ).firstMatch(fullText);
     if (minDueMatch != null) {
@@ -67,7 +76,7 @@ class StatementParser {
 
     double? limit;
     final limitMatch = RegExp(
-      r'(?:total\s*)?credit\s*limit\s*[:\-]?\s*(?:rs\.?|inr|₹)?\s*([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{2})?)',
+      r'(?:total\s*)?credit\s*limit\s*[:\-]?\s*[C₹Rs\.INR]*\s*([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{2})?)',
       caseSensitive: false,
     ).firstMatch(fullText);
     if (limitMatch != null) {
@@ -76,7 +85,7 @@ class StatementParser {
 
     double? avlLimit;
     final avlMatch = RegExp(
-      r'available\s*(?:credit|limit)\s*[:\-]?\s*(?:rs\.?|inr|₹)?\s*([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{2})?)',
+      r'available\s*(?:credit|limit)\s*[:\-]?\s*[C₹Rs\.INR]*\s*([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{2})?)',
       caseSensitive: false,
     ).firstMatch(fullText);
     if (avlMatch != null) {
@@ -85,7 +94,7 @@ class StatementParser {
 
     double? financeCharges;
     final financeMatch = RegExp(
-      r'(?:finance|interest)\s*charges?\s*[:\-]?\s*(?:rs\.?|inr|₹)?\s*([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{2})?)',
+      r'(?:finance|interest)\s*charges?\s*[:\-]?\s*[C₹Rs\.INR]*\s*([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{2})?)',
       caseSensitive: false,
     ).firstMatch(fullText);
     if (financeMatch != null) {
@@ -94,7 +103,7 @@ class StatementParser {
 
     double? gstCharges;
     final gstMatch = RegExp(
-      r'(?:total\s*taxes|igst|gst\s*on\s*charges)\s*[:\-]?\s*(?:rs\.?|inr|₹)?\s*([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{2})?)',
+      r'(?:total\s*taxes|total\s*gst|igst|gst\s*on\s*charges)\s*[:\-]?\s*[C₹Rs\.INR]*\s*([0-9]{1,3}(?:,[0-9]{2,3})*(?:\.[0-9]{2})?)',
       caseSensitive: false,
     ).firstMatch(fullText);
     if (gstMatch != null) {
@@ -119,11 +128,12 @@ class StatementParser {
       dueDate: dueDate,
       totalAmountDue: totalDue,
       minAmountDue: minDue,
-      creditLimit: limit,
-      availableCredit: avlLimit,
+      totalCreditLimit: limit,
+      availableCreditLimit: avlLimit,
       financeCharges: financeCharges,
       gstCharges: gstCharges,
       emiSummaries: emis,
+      extractedVia: "deterministic:regex",
     );
 
     lastExtractedSummary = summary;
@@ -817,16 +827,35 @@ class StatementParser {
 
       if (fullText.trim().isEmpty) return [];
 
-      lastExtractedSummary = extractCreditCardSummary(fullText);
+      CreditCardStatementSummary summary = extractCreditCardSummary(fullText);
+      if (summary.totalAmountDue == null) {
+        final llmSummary = await StatementTemplateManager.instance
+            .extractWithLlmAndLearnTemplate(fullText);
+        if (llmSummary != null && llmSummary.hasData) {
+          summary = llmSummary;
+        }
+      }
+      lastExtractedSummary = summary;
 
-      // 1. Try deterministic multi-line statement text parser
+      // 1. Try template-based transaction extraction (e.g. HDFC RuPay, ICICI, SBI)
+      final templateEntries = StatementTemplateManager.instance
+          .extractTransactionsWithTemplate(fullText,
+              targetWalletPk: targetWalletPk);
+      if (templateEntries != null && templateEntries.isNotEmpty) {
+        if (targetWalletPk != null && targetWalletPk.isNotEmpty) {
+          await checkDuplicates(templateEntries, targetWalletPk);
+        }
+        return templateEntries;
+      }
+
+      // 2. Try deterministic multi-line statement text parser
       final entries = await parsePdfTextLines(fullText,
           targetWalletPk: targetWalletPk);
       if (entries.isNotEmpty) {
         return entries;
       }
 
-      // 2. If line layout is multi-column or transactions span pages 2/3 (e.g. credit card statements),
+      // 3. If line layout is multi-column or transactions span pages 2/3 (e.g. credit card statements),
       // invoke AI extraction helper
       final aiEntries = await parseStatementWithAi(fullText,
           targetWalletPk: targetWalletPk);
