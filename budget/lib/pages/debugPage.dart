@@ -598,6 +598,77 @@ class DebugPage extends StatelessWidget {
               ),
               SizedBox(height: 20),
               Button(
+                label: "Run Database Integrity & Health Check",
+                icon: Icons.health_and_safety_outlined,
+                onTap: () async {
+                  try {
+                    final rows = await database
+                        .customSelect('PRAGMA integrity_check')
+                        .get();
+                    final status = rows.isNotEmpty
+                        ? rows.first.data.values.first.toString()
+                        : "Unknown";
+                    final dbInfo = await getCurrentDBFileInfo();
+                    final sizeMb =
+                        (dbInfo.dbFileBytes.length / (1024 * 1024))
+                            .toStringAsFixed(2);
+                    openPopup(
+                      context,
+                      title: "Database Health Status",
+                      description:
+                          "Integrity Check: $status\nDatabase Size: $sizeMb MB\nSchema Version: $schemaVersionGlobal",
+                      icon: status.toLowerCase() == "ok"
+                          ? Icons.check_circle_outline
+                          : Icons.error_outline,
+                      onSubmit: () => Navigator.pop(context),
+                      onSubmitLabel: "Close",
+                    );
+                  } catch (e) {
+                    openSnackbar(
+                      SnackbarMessage(
+                        title: "Health Check Error",
+                        description: e.toString(),
+                        icon: Icons.error,
+                      ),
+                    );
+                  }
+                },
+              ),
+              SizedBox(height: 20),
+              Button(
+                label: "View Database Table Statistics",
+                icon: Icons.analytics_outlined,
+                onTap: () async {
+                  try {
+                    final txnCount = (await database.allTransactions).length;
+                    final wallets = (await database.getAllWallets()).length;
+                    final categories =
+                        (await database.getAllCategories()).length;
+                    final budgets = (await database.getAllBudgets()).length;
+                    final deleteLogs =
+                        (await database.getAllDeleteLogs()).length;
+                    openPopup(
+                      context,
+                      title: "Database Statistics",
+                      description:
+                          "Transactions: $txnCount\nWallets/Accounts: $wallets\nCategories: $categories\nBudgets: $budgets\nDelete Logs: $deleteLogs",
+                      icon: Icons.table_chart_outlined,
+                      onSubmit: () => Navigator.pop(context),
+                      onSubmitLabel: "Close",
+                    );
+                  } catch (e) {
+                    openSnackbar(
+                      SnackbarMessage(
+                        title: "Statistics Error",
+                        description: e.toString(),
+                        icon: Icons.error,
+                      ),
+                    );
+                  }
+                },
+              ),
+              SizedBox(height: 20),
+              Button(
                   label: "Force full sync",
                   onTap: () async {
                     sharedPreferences.setString(

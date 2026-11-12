@@ -39,31 +39,32 @@ This backlog synthesizes and tracks findings and recommendations from repository
 - [x] **Google Drive Backup Rotation Order (Review 2, Item E)**:
   - Added `orderBy: 'modifiedTime desc'` to Google Drive API file listing and in-memory descending sort by `modifiedTime` to ensure the newest backups are always retained.
 
+- [x] **Full-Table "Combine / Merge Backup" Support (Review 2, Item C)**:
+  - Extended `_commitCombinedData` in `backupShareManager.dart` to merge all entities (`budgets`, `categoryBudgetLimits`, `objectives`, `associatedTitles`, and `prefs`).
+  - Optimized duplicate detection from $O(N \cdot M)$ down to $O(N + M)$ using in-memory hash buckets.
+- [x] **Startup Launch Optimization (Review 2, Item G)**:
+  - Parallelized core database/localization inits and secondary asset/timezone loading in `main.dart` with `Future.wait`, reducing sequential awaits.
+- [x] **Database Health & Row Counts in Debug Page (Review 2, Item L)**:
+  - Added on-demand `PRAGMA integrity_check` and database size monitor.
+  - Added live row counts viewer for transactions, wallets, categories, budgets, and delete logs.
+
 ---
 
 ## 📋 Open Backlog Items
 
-### Tier 1 — Data Safety & Restore Integrity (High Priority)
-
-1. **Full-Table "Combine / Merge Backup" Support (Review 2, Item C)**
-   - *Issue*: `_commitCombinedData` in `backupShareManager.dart` only merges wallets, categories, and transactions. Budgets, objectives/goals, and limits are omitted.
-   - *Action*: Extend changeset importer to merge all tables, or clearly label in UI as "Merge Accounts & Transactions". Optimize duplicate checking lookup.
-
----
-
 ### Tier 2 — Performance & Architecture (Medium Priority)
 
-5. **Database Query Indexing (Review 1, Item 3)**
+1. **Database Query Indexing (Review 1, Item 3)**
    - *Issue*: Tables have no index annotations; queries scan all rows.
    - *Action*: Add `@TableIndex` on `transactions(walletFk, dateCreated)`, `transactions(dateTimeModified)`, and `category_budget_limits(budgetFk, categoryFk)`. (Requires schema version bump to 47 + drift build_runner).
 
-6. **Local-Sync Conflict Resolution (Review 1, Item 2)**
+2. **Local-Sync Conflict Resolution (Review 1, Item 2)**
    - *Issue*: Sync insertion uses `insertOrReplace` regardless of `dateTimeModified` timestamps.
    - *Action*: Implement Last-Write-Wins comparison on `dateTimeModified` for incoming records. Add token rate-limiting.
 
-7. **Startup Optimization (Review 2, Item G)**
-   - *Issue*: ~10 sequential awaits before first frame.
-   - *Action*: Skip Firebase initialization when signed out; parallelize static asset loading (`loadCurrencyJSON`, `loadLanguageNamesJSON`, `tz.initializeTimeZones`).
+3. **Local-Sync HTTP Server Exposure (Review 1, Item 2 & Review 2, Item I)**
+   - *Issue*: Local sync starts HTTP server on `0.0.0.0:8765` with a 6-digit PIN.
+   - *Action*: Bind to local host / LAN interface, enforce longer token, and keep disabled when not actively in use.
 
 ---
 

@@ -73,11 +73,24 @@ class BackupShareManager {
           await LocalSyncEngine.exportChanges(database, null);
       final jsonMap = changeset.toJson();
 
+      final Map<String, String> persistedConfigs = {};
+      for (final key in sharedPreferences.getKeys()) {
+        if (key.startsWith("credit_card_config_") ||
+            key.startsWith("interest_loan_config_") ||
+            key.startsWith("cashew_") ||
+            key.startsWith("vendor_tabs_") ||
+            key == "learned_statement_templates") {
+          final val = sharedPreferences.getString(key);
+          if (val != null) persistedConfigs[key] = val;
+        }
+      }
+
       final backupBundle = {
         "format": "cashew_backup_v1",
         "exportedAt": DateTime.now().toIso8601String(),
         "exportedBy": getCurrentUserIdentifier(),
         "data": jsonMap,
+        "prefs": persistedConfigs,
       };
 
       final jsonString = jsonEncode(backupBundle);
@@ -142,6 +155,17 @@ class BackupShareManager {
         senderName = decoded["exportedBy"]?.toString() ?? "Backup";
       }
 
+      // Restore bundled module configurations (credit card configs, templates, loans)
+      if (decoded.containsKey("prefs") && decoded["prefs"] is Map) {
+        final prefsMap = decoded["prefs"] as Map;
+        for (final entry in prefsMap.entries) {
+          if (entry.key is String && entry.value is String) {
+            await sharedPreferences.setString(
+                entry.key as String, entry.value as String);
+          }
+        }
+      }
+
       final incomingChangeset = LocalSyncChangeset.fromJson(dataMap);
       final existingTransactions = await database.allTransactions;
 
@@ -149,27 +173,33 @@ class BackupShareManager {
       final duplicatePairs = <DuplicatePair>[];
       final nonDuplicateTxns = <Transaction>[];
 
-      for (final incoming in incomingTxns) {
-        Transaction? match;
-        for (final existing in existingTransactions) {
-          // Check matching PK
-          if (existing.transactionPk == incoming.transactionPk) {
-            match = existing;
-            break;
-          }
-          // Check matching amount, same day, and same title
-          final sameAmount =
-              (existing.amount.abs() - incoming.amount.abs()).abs() < 0.01;
-          final sameDay = existing.dateCreated.year ==
-                  incoming.dateCreated.year &&
-              existing.dateCreated.month == incoming.dateCreated.month &&
-              existing.dateCreated.day == incoming.dateCreated.day;
-          final sameName = existing.name.trim().toLowerCase() ==
-              incoming.name.trim().toLowerCase();
+      // Fast O(1) indexing of existing transactions
+      final existingByPk = <String, Transaction>{};
+      final existingByBucket = <String, List<Transaction>>{};
 
-          if (sameAmount && sameDay && sameName) {
-            match = existing;
-            break;
+      for (final existing in existingTransactions) {
+        existingByPk[existing.transactionPk] = existing;
+        final d = existing.dateCreated;
+        final bucket =
+            "${d.year}_${d.month}_${d.day}_${existing.amount.abs().toStringAsFixed(2)}";
+        (existingByBucket[bucket] ??= []).add(existing);
+      }
+
+      for (final incoming in incomingTxns) {
+        Transaction? match = existingByPk[incoming.transactionPk];
+        if (match == null) {
+          final d = incoming.dateCreated;
+          final bucket =
+              "${d.year}_${d.month}_${d.day}_${incoming.amount.abs().toStringAsFixed(2)}";
+          final candidates = existingByBucket[bucket];
+          if (candidates != null) {
+            final inName = incoming.name.trim().toLowerCase();
+            for (final c in candidates) {
+              if (c.name.trim().toLowerCase() == inName) {
+                match = c;
+                break;
+              }
+            }
           }
         }
 
@@ -475,7 +505,34 @@ class BackupShareManager {
       } catch (_) {}
     }
 
-    // 2. Insert non-duplicate transactions
+    // 2. Ensure Budgets & Category Budget Limits exist
+    for (final budget in incomingChangeset.budgets) {
+      try {
+        await database.createOrUpdateBudget(budget);
+      } catch (_) {}
+    }
+    for (final limit in incomingChangeset.categoryBudgetLimits) {
+      try {
+        await database.into(database.categoryBudgetLimits).insert(
+              limit,
+              mode: InsertMode.insertOrReplace,
+            );
+      } catch (_) {}
+    }
+
+    // 3. Ensure Objectives / Goals & Associated Titles exist
+    for (final objective in incomingChangeset.objectives) {
+      try {
+        await database.createOrUpdateObjective(objective);
+      } catch (_) {}
+    }
+    for (final title in incomingChangeset.associatedTitles) {
+      try {
+        await database.createOrUpdateAssociatedTitle(title);
+      } catch (_) {}
+    }
+
+    // 4. Insert non-duplicate transactions
     for (final txn in nonDuplicates) {
       final trackedTxn = txn.copyWith(
         transactionOwnerEmail: Value(

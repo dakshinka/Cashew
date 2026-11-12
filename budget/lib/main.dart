@@ -49,26 +49,40 @@ void main() async {
         options: DefaultFirebaseOptions.currentPlatform,
       );
     } catch (e) {
-      debugPrint("Warning: Firebase initialization failed, continuing in offline mode: $e");
+      debugPrint(
+          "Warning: Firebase initialization failed, continuing in offline mode: $e");
     }
-    await EasyLocalization.ensureInitialized();
-    sharedPreferences = await SharedPreferences.getInstance();
-    database = await constructDb('db');
-    notificationPayload = await initializeNotifications();
+
+    final coreInits = await Future.wait([
+      EasyLocalization.ensureInitialized(),
+      SharedPreferences.getInstance(),
+      constructDb('db'),
+      initializeNotifications(),
+    ]);
+
+    sharedPreferences = coreInits[1] as SharedPreferences;
+    database = coreInits[2] as FinanceDatabase;
+    notificationPayload = coreInits[3] as String?;
     entireAppLoaded = false;
-    await loadCurrencyJSON();
-    await loadLanguageNamesJSON();
-    await initializeSettings();
-    tz.initializeTimeZones();
-    try {
-      final timezoneInfo = await FlutterTimezone.getLocalTimezone();
-      tz.setLocalLocation(tz.getLocation(timezoneInfo.identifier));
-    } catch (e) {
-      debugPrint("Could not set local timezone: $e");
-      try {
-        tz.setLocalLocation(tz.getLocation("America/New_York"));
-      } catch (_) {}
-    }
+
+    // Load independent assets, settings, and timezone in parallel
+    await Future.wait<dynamic>([
+      loadCurrencyJSON(),
+      loadLanguageNamesJSON(),
+      initializeSettings(),
+      (() async {
+        tz.initializeTimeZones();
+        try {
+          final timezoneInfo = await FlutterTimezone.getLocalTimezone();
+          tz.setLocalLocation(tz.getLocation(timezoneInfo.identifier));
+        } catch (e) {
+          debugPrint("Could not set local timezone: $e");
+          try {
+            tz.setLocalLocation(tz.getLocation("America/New_York"));
+          } catch (_) {}
+        }
+      })(),
+    ]);
     iconObjects.sort((a, b) => (a.mostLikelyCategoryName ?? a.icon)
         .compareTo((b.mostLikelyCategoryName ?? b.icon)));
     setHighRefreshRate();
