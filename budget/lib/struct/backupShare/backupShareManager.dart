@@ -568,6 +568,17 @@ class BackupShareManager {
 
       await initializeDefaultDatabase();
 
+      // Clear all module preferences to avoid orphaned configs
+      for (final key in sharedPreferences.getKeys().toList()) {
+        if (key.startsWith("credit_card_config_") ||
+            key.startsWith("interest_loan_config_") ||
+            key.startsWith("cashew_") ||
+            key.startsWith("vendor_tabs_") ||
+            key == "learned_statement_templates") {
+          await sharedPreferences.remove(key);
+        }
+      }
+
       if (!context.mounted) return;
       openSnackbar(
         SnackbarMessage(

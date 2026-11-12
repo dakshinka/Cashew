@@ -62,10 +62,23 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
     String? detectedDigits = summary?.cardLast4?.trim();
     if (detectedDigits == null || detectedDigits.isEmpty) {
       if (fileName != null) {
-        final match =
-            RegExp(r'(?:_|\b)(\d{4})(?:_|\b|\.)').firstMatch(fileName);
-        if (match != null) {
-          detectedDigits = match.group(1);
+        // Look for explicit card/account patterns e.g. card_2485, cc_2485, xx2485, or _2485_
+        final explicitMatch = RegExp(
+          r'(?:card|cc|acct|acc|xx|ending)[-_ ]*(\d{4})\b|_(\d{4})_',
+          caseSensitive: false,
+        ).firstMatch(fileName);
+        if (explicitMatch != null) {
+          final candidate = explicitMatch.group(1) ?? explicitMatch.group(2);
+          if (candidate != null) {
+            final val = int.tryParse(candidate);
+            final isYear = val != null && val >= 1990 && val <= 2040;
+            // Only accept if not an isolated year, or if filename explicitly references card/cc
+            if (!isYear ||
+                fileName.toLowerCase().contains("card") ||
+                fileName.toLowerCase().contains("cc")) {
+              detectedDigits = candidate;
+            }
+          }
         }
       }
     }
@@ -103,8 +116,9 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
 
     // 3. Try to match an existing wallet
     TransactionWallet? matchedWallet;
+    final bool isCreditStatement = summary != null && summary.hasData;
 
-    // Strategy A: Match by CreditCardConfig.cardLast4
+    // Strategy A: Match by CreditCardConfig.cardLast4 (strict card match)
     if (detectedDigits != null && detectedDigits.isNotEmpty) {
       for (final w in wallets) {
         final cfg = CreditCardManager.instance.getConfig(w.walletPk);
@@ -117,16 +131,25 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
       }
     }
 
-    // Strategy B: Match wallet name containing detectedDigits
+    // Strategy B: Match credit-enabled wallet whose name contains the exact 4-digit token
     if (matchedWallet == null &&
         detectedDigits != null &&
-        detectedDigits.isNotEmpty) {
+        detectedDigits.length == 4) {
       for (final w in wallets) {
-        final wDigits = w.name.replaceAll(RegExp(r'\D'), '');
-        if (wDigits.contains(detectedDigits) ||
-            w.name.contains(detectedDigits)) {
+        final cfg = CreditCardManager.instance.getConfig(w.walletPk);
+        final wLower = w.name.toLowerCase();
+        final isCreditWallet = cfg.isEnabled ||
+            wLower.contains("credit") ||
+            wLower.contains("card") ||
+            RegExp(r'\bcc\b').hasMatch(wLower);
+
+        // Require credit account compatibility when importing a credit statement
+        if (isCreditStatement && !isCreditWallet) continue;
+
+        final hasExactDigits =
+            RegExp('\\b${RegExp.escape(detectedDigits)}\\b').hasMatch(w.name);
+        if (hasExactDigits) {
           if (detectedProvider != null) {
-            final wLower = w.name.toLowerCase();
             final pLower = detectedProvider.toLowerCase();
             if (wLower.contains(pLower) || pLower.contains(wLower)) {
               matchedWallet = w;
@@ -152,6 +175,7 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
             wLower.contains("credit") ||
             wLower.contains("card") ||
             RegExp(r'\bcc\b').hasMatch(wLower);
+        if (isCreditStatement && !isCredit) return false;
         return isCredit && (wLower.contains(pLower) || pLower.contains(wLower));
       }).toList();
 
@@ -160,10 +184,22 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
       }
     }
 
-    // Strategy D: Match using ReviewManager account resolution
+    // Strategy D: Match using ReviewManager account resolution (only for non-conflicting types)
     if (matchedWallet == null && detectedProvider != null) {
-      matchedWallet =
+      final candidate =
           ReviewManager.findMatchingWallet(wallets, detectedProvider);
+      if (candidate != null) {
+        final cfg = CreditCardManager.instance.getConfig(candidate.walletPk);
+        final cLower = candidate.name.toLowerCase();
+        final isCreditWallet = cfg.isEnabled ||
+            cLower.contains("credit") ||
+            cLower.contains("card") ||
+            RegExp(r'\bcc\b').hasMatch(cLower);
+        // Do not match a savings account when importing a credit card statement
+        if (!isCreditStatement || isCreditWallet) {
+          matchedWallet = candidate;
+        }
+      }
     }
 
     if (matchedWallet != null) {

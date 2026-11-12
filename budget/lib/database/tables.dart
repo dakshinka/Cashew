@@ -771,14 +771,14 @@ class FinanceDatabase extends _$FinanceDatabase {
           try {
             await migrator.addColumn(budgets, budgets.sharedAllMembersEver);
           } catch (e) {
-            print(e.toString);
+            debugPrint("Migration error (non-fatal): ${e.toString()}");
           }
         }
         if (from <= 25) {
           try {
             await migrator.addColumn(budgets, budgets.addedTransactionsOnly);
           } catch (e) {
-            print(e.toString);
+            debugPrint("Migration error (non-fatal): ${e.toString()}");
           }
         }
         if (from <= 26) {
@@ -786,7 +786,7 @@ class FinanceDatabase extends _$FinanceDatabase {
             await migrator.addColumn(
                 transactions, transactions.upcomingTransactionNotification);
           } catch (e) {
-            print(e.toString);
+            debugPrint("Migration error (non-fatal): ${e.toString()}");
           }
         }
         if (from <= 27) {
@@ -796,19 +796,19 @@ class FinanceDatabase extends _$FinanceDatabase {
           try {
             await migrator.addColumn(budgets, budgets.budgetTransactionFilters);
           } catch (e) {
-            print(e.toString);
+            debugPrint("Migration error (non-fatal): ${e.toString()}");
           }
           try {
             await migrator.addColumn(budgets, budgets.memberTransactionFilters);
           } catch (e) {
-            print(e.toString);
+            debugPrint("Migration error (non-fatal): ${e.toString()}");
           }
         }
         if (from <= 29) {
           try {
             await migrator.addColumn(budgets, budgets.dateTimeModified);
           } catch (e) {
-            print(e.toString);
+            debugPrint("Migration error (non-fatal): ${e.toString()}");
           }
           await migrator.alterTable(TableMigration(budgets));
         }
@@ -816,41 +816,41 @@ class FinanceDatabase extends _$FinanceDatabase {
           try {
             await migrator.addColumn(wallets, wallets.dateTimeModified);
           } catch (e) {
-            print(e.toString);
+            debugPrint("Migration error (non-fatal): ${e.toString()}");
           }
           try {
             await migrator.addColumn(
                 transactions, transactions.dateTimeModified);
           } catch (e) {
-            print(e.toString);
+            debugPrint("Migration error (non-fatal): ${e.toString()}");
           }
           try {
             await migrator.addColumn(categories, categories.dateTimeModified);
           } catch (e) {
-            print(e.toString);
+            debugPrint("Migration error (non-fatal): ${e.toString()}");
           }
           try {
             await migrator.addColumn(
                 categoryBudgetLimits, categoryBudgetLimits.dateTimeModified);
           } catch (e) {
-            print(e.toString);
+            debugPrint("Migration error (non-fatal): ${e.toString()}");
           }
           try {
             await migrator.addColumn(
                 associatedTitles, associatedTitles.dateTimeModified);
           } catch (e) {
-            print(e.toString);
+            debugPrint("Migration error (non-fatal): ${e.toString()}");
           }
           try {
             await migrator.addColumn(budgets, budgets.dateTimeModified);
           } catch (e) {
-            print(e.toString);
+            debugPrint("Migration error (non-fatal): ${e.toString()}");
           }
           try {
             await migrator.addColumn(
                 scannerTemplates, scannerTemplates.dateTimeModified);
           } catch (e) {
-            print(e.toString);
+            debugPrint("Migration error (non-fatal): ${e.toString()}");
           }
           // await migrator.addColumn(labels, labels.dateTimeModified);
         }

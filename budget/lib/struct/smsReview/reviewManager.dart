@@ -974,19 +974,19 @@ class ReviewManager {
 
   static String? _extractBankBrand(String str) {
     final lower = str.toLowerCase();
-    if (lower.contains("hdfc")) return "hdfc";
-    if (lower.contains("sbi") || lower.contains("state bank")) return "sbi";
-    if (lower.contains("icici")) return "icici";
-    if (lower.contains("axis")) return "axis";
-    if (lower.contains("kotak")) return "kotak";
-    if (lower.contains("rbl")) return "rbl";
-    if (lower.contains("pnb") || lower.contains("punjab")) return "pnb";
-    if (lower.contains("canara")) return "canara";
-    if (lower.contains("idfc")) return "idfc";
-    if (lower.contains("bob") || lower.contains("baroda")) return "bob";
-    if (lower.contains("indusind")) return "indusind";
-    if (lower.contains("yes")) return "yes";
-    if (lower.contains("federal")) return "federal";
+    if (RegExp(r'\bhdfc\b').hasMatch(lower)) return "hdfc";
+    if (RegExp(r'\bsbi\b').hasMatch(lower) || lower.contains("state bank")) return "sbi";
+    if (RegExp(r'\bicici\b').hasMatch(lower)) return "icici";
+    if (RegExp(r'\baxis\b').hasMatch(lower)) return "axis";
+    if (RegExp(r'\bkotak\b').hasMatch(lower)) return "kotak";
+    if (RegExp(r'\brbl\b').hasMatch(lower)) return "rbl";
+    if (RegExp(r'\bpnb\b').hasMatch(lower) || lower.contains("punjab")) return "pnb";
+    if (RegExp(r'\bcanara\b').hasMatch(lower)) return "canara";
+    if (RegExp(r'\bidfc\b').hasMatch(lower)) return "idfc";
+    if (RegExp(r'\bbob\b').hasMatch(lower) || lower.contains("baroda") || lower.contains("bank of baroda")) return "bob";
+    if (RegExp(r'\bindusind\b').hasMatch(lower)) return "indusind";
+    if (RegExp(r'\byes\s+bank\b').hasMatch(lower) || RegExp(r'\byesbank\b').hasMatch(lower)) return "yes";
+    if (RegExp(r'\bfederal\b').hasMatch(lower)) return "federal";
     return null;
   }
 }

@@ -519,16 +519,30 @@ class DebugPage extends StatelessWidget {
           padding: const EdgeInsetsDirectional.symmetric(horizontal: 20),
           child: Column(
             children: [
-              Button(
-                label: "Redo migration (from db 37 above)",
-                onTap: () async {
-                  await database.customStatement('PRAGMA user_version = 37');
-                  if (kIsWeb) {
-                    final html.Storage localStorage = html.window.localStorage;
-                    localStorage["moor_db_version_db"] = "37";
-                  }
-                  restartAppPopup(context);
-                },
+              DangerousDebugFlag(
+                child: Button(
+                  label: "Redo migration (from db 37 above)",
+                  color: Colors.red.shade800,
+                  onTap: () async {
+                    openPopup(
+                      context,
+                      title: "Warning: Data Loss Risk",
+                      description:
+                          "This rolls back the internal schema version to 37 and restarts the app. Are you absolutely sure?",
+                      icon: Icons.warning_rounded,
+                      onSubmit: () async {
+                        await database.customStatement('PRAGMA user_version = 37');
+                        if (kIsWeb) {
+                          final html.Storage localStorage = html.window.localStorage;
+                          localStorage["moor_db_version_db"] = "37";
+                        }
+                        restartAppPopup(context);
+                      },
+                      onSubmitLabel: "Reset Schema",
+                      onCancelLabel: "Cancel",
+                    );
+                  },
+                ),
               ),
               SizedBox(height: 20),
               Button(

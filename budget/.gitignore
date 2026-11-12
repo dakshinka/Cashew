@@ -31,7 +31,6 @@
 .pub/
 /build/
 local.properties
-pubspec.lock
 
 # Web related
 ./firebase

@@ -39,8 +39,19 @@ Future<bool> initializeSettings() async {
       print("Settings were loaded from backup, trying to restore");
       String storedSettings = (await database.getSettings()).settingsJSON;
       await sharedPreferences.setString('userSettings', storedSettings);
-      print(storedSettings);
       userSettings = json.decode(storedSettings);
+
+      // Restore module configurations (Credit Card configs, learned statement templates, loans, group tabs)
+      if (userSettings.containsKey("__cashew_persisted_configs__")) {
+        final configs = userSettings["__cashew_persisted_configs__"];
+        if (configs is Map) {
+          for (final entry in configs.entries) {
+            if (entry.key is String && entry.value is String) {
+              await sharedPreferences.setString(entry.key as String, entry.value as String);
+            }
+          }
+        }
+      }
       //we need to load any defaults to migrate if on an older version backup restores
       //Set to defaults if a new setting is added, but no entry saved
       Map<String, dynamic> userPreferencesDefault =
@@ -322,18 +333,41 @@ Future<void> resetLanguageToSystem(BuildContext context) async {
   );
 }
 
-// Backup user settings by creating an entry in the db
+// Backup user settings and module configs by creating an entry in the db
 Future backupSettings() async {
-  String userSettings = sharedPreferences.getString('userSettings') ?? "";
-  if (userSettings == "") throw ("No settings stored");
+  String userSettingsStr = sharedPreferences.getString('userSettings') ?? "{}";
+  Map<String, dynamic> userSettingsMap = {};
+  try {
+    userSettingsMap = json.decode(userSettingsStr);
+  } catch (_) {}
+
+  // Harvest all plugin/module configs stored in sharedPreferences
+  final Map<String, String> persistedConfigs = {};
+  for (final key in sharedPreferences.getKeys()) {
+    if (key.startsWith("credit_card_config_") ||
+        key.startsWith("interest_loan_config_") ||
+        key.startsWith("cashew_") ||
+        key.startsWith("vendor_tabs_") ||
+        key == "learned_statement_templates") {
+      final val = sharedPreferences.getString(key);
+      if (val != null) {
+        persistedConfigs[key] = val;
+      }
+    }
+  }
+  userSettingsMap["__cashew_persisted_configs__"] = persistedConfigs;
+
+  final finalJson = json.encode(userSettingsMap);
+  await sharedPreferences.setString('userSettings', finalJson);
+
   await database.createOrUpdateSettings(
     AppSetting(
       settingsPk: 0,
-      settingsJSON: userSettings,
+      settingsJSON: finalJson,
       dateUpdated: DateTime.now(),
     ),
   );
-  print("Created settings entry in DB");
+  print("Created settings entry in DB with ${persistedConfigs.length} module configs bundled");
 }
 
 class TranslationsHelp extends StatelessWidget {

@@ -5,7 +5,6 @@ COPY budget/ ./budget/
 
 WORKDIR /app/budget
 RUN flutter config --enable-web && \
-    rm -f pubspec.lock && \
     flutter pub get && \
     flutter build web --release --no-tree-shake-icons
 

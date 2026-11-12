@@ -122,7 +122,7 @@ Output ONLY the rule text to append to the system prompt.
             ],
             "generationConfig": {"temperature": 0.2}
           }),
-        );
+        ).timeout(const Duration(seconds: 15));
         if (response.statusCode == 200) {
           final resData = jsonDecode(response.body);
           final candidates = resData["candidates"] as List?;
@@ -163,7 +163,7 @@ Output ONLY the rule text to append to the system prompt.
               ],
               "temperature": 0.2,
             }),
-          );
+          ).timeout(const Duration(seconds: 15));
           if (response.statusCode == 200) {
             final resData = jsonDecode(response.body);
             final text = resData["choices"]?[0]?["message"]?["content"]?.toString().trim();
