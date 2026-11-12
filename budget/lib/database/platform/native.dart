@@ -36,9 +36,42 @@ Future<DBFileInfo> getCurrentDBFileInfo() async {
   return DBFileInfo(dbFileBytes, mediaStream);
 }
 
+bool isValidSqliteHeader(Uint8List bytes) {
+  if (bytes.length < 16) return false;
+  // SQLite format 3\000
+  const magic = [
+    0x53, 0x51, 0x4C, 0x69, 0x74, 0x65, 0x20, 0x66,
+    0x6F, 0x72, 0x6D, 0x61, 0x74, 0x20, 0x33, 0x00
+  ];
+  for (int i = 0; i < 16; i++) {
+    if (bytes[i] != magic[i]) return false;
+  }
+  return true;
+}
+
 Future overwriteDefaultDB(Uint8List dataStore) async {
+  if (!isValidSqliteHeader(dataStore)) {
+    throw Exception("Selected file is not a valid SQLite database file.");
+  }
+
   final dbFolder = await getApplicationDocumentsDirectory();
   final dbFile = File(p.join(dbFolder.path, 'db.sqlite'));
+
+  // Save safety snapshot before overwriting
+  if (await dbFile.exists()) {
+    try {
+      final snapshot = File(p.join(dbFolder.path, 'db.sqlite.pre_restore_backup'));
+      await dbFile.copy(snapshot.path);
+    } catch (_) {}
+  }
+
+  // Close live DB executor connections before writing new database file
+  try {
+    await database.close();
+  } catch (e) {
+    print("Notice: live database closed prior to restore: $e");
+  }
+
   await dbFile.writeAsBytes(dataStore);
   // we need to be able to sync with others after the restore
   await sharedPreferences.setString("dateOfLastSyncedWithClient", "{}");

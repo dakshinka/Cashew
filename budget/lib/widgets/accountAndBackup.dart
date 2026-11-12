@@ -301,44 +301,79 @@ Future<bool> signInAndSync(BuildContext context,
 }
 
 Future<void> createBackupInBackground(context) async {
-  if (appStateSettings["hasSignedIn"] == false) return;
-  if (errorSigningInDuringCloud == true) return;
   if (kIsWeb && !entireAppLoaded) return;
-  // print(entireAppLoaded);
-  print("Last backup: " + appStateSettings["lastBackup"]);
-  //Only run this once, don't run again if the global state changes (e.g. when changing a setting)
-  // Update: Does this still run when global state changes? I don't think so...
-  // If the entire app is loaded and we want to do an auto backup, lets do it no matter what!
-  // if (entireAppLoaded == false || entireAppLoaded) {
-  if (appStateSettings["autoBackups"] == true) {
-    DateTime lastUpdate = DateTime.parse(appStateSettings["lastBackup"]);
-    DateTime nextPlannedBackup = lastUpdate
-        .add(Duration(days: appStateSettings["autoBackupsFrequency"]));
-    print("next backup planned on " + nextPlannedBackup.toString());
-    if (DateTime.now().millisecondsSinceEpoch >=
-        nextPlannedBackup.millisecondsSinceEpoch) {
-      print("auto backing up");
+  if (appStateSettings["autoBackups"] != true) return;
 
-      bool hasSignedIn = false;
-      if (googleUser == null) {
-        hasSignedIn = await signInGoogle(
-            context: context,
-            gMailPermissions: false,
-            waitForCompletion: false,
-            silentSignIn: true);
-      } else {
-        hasSignedIn = true;
-      }
-      if (hasSignedIn == false) {
-        return;
-      }
-      await createBackup(context, silentBackup: true, deleteOldBackups: true);
+  DateTime lastUpdate =
+      DateTime.tryParse(appStateSettings["lastBackup"] ?? "") ??
+          DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime nextPlannedBackup = lastUpdate
+      .add(Duration(days: appStateSettings["autoBackupsFrequency"] ?? 1));
+
+  if (DateTime.now().millisecondsSinceEpoch <
+      nextPlannedBackup.millisecondsSinceEpoch) {
+    return;
+  }
+
+  // 1. If signed into Google, create cloud backup
+  if (appStateSettings["hasSignedIn"] == true && !errorSigningInDuringCloud) {
+    bool hasSignedIn = false;
+    if (googleUser == null) {
+      hasSignedIn = await signInGoogle(
+          context: context,
+          gMailPermissions: false,
+          waitForCompletion: false,
+          silentSignIn: true);
     } else {
-      print("backup already made today");
+      hasSignedIn = true;
+    }
+    if (hasSignedIn) {
+      await createBackup(context, silentBackup: true, deleteOldBackups: true);
+      return;
     }
   }
-  // }
-  return;
+
+  // 2. Fallback: Local rolling auto-backup for offline/non-Google users
+  await createLocalAutoBackup();
+}
+
+Future<void> createLocalAutoBackup() async {
+  try {
+    await backupSettings();
+    if (!kIsWeb) {
+      final dbFolder = await getApplicationDocumentsDirectory();
+      final backupDir = Directory(p.join(dbFolder.path, 'backups'));
+      if (!await backupDir.exists()) {
+        await backupDir.create(recursive: true);
+      }
+      final dbFile = File(p.join(dbFolder.path, 'db.sqlite'));
+      if (await dbFile.exists()) {
+        final now = DateTime.now();
+        final timestamp =
+            "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
+        final targetPath =
+            p.join(backupDir.path, 'cashew-auto-$timestamp.sqlite');
+        await dbFile.copy(targetPath);
+
+        // Keep at most 7 local auto backups
+        final files = backupDir.listSync().whereType<File>().toList();
+        if (files.length > 7) {
+          files.sort((a, b) =>
+              b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+          for (int i = 7; i < files.length; i++) {
+            try {
+              files[i].deleteSync();
+            } catch (_) {}
+          }
+        }
+        await updateSettings("lastBackup", DateTime.now().toString(),
+            updateGlobalState: false, pagesNeedingRefresh: []);
+        debugPrint("Local auto-backup created: $targetPath");
+      }
+    }
+  } catch (e) {
+    debugPrint("Error creating local auto backup: $e");
+  }
 }
 
 Future forceDeleteDB() async {
@@ -427,9 +462,6 @@ Future<void> createBackup(
         currentDBFileInfo.mediaStream, currentDBFileInfo.dbFileBytes.length);
 
     var driveFile = new drive.File();
-    final timestamp =
-        DateFormat("yyyy-MM-dd-hhmmss").format(DateTime.now().toUtc());
-    // -$timestamp
     driveFile.name =
         "db-v$schemaVersionGlobal-${getCurrentDeviceName()}.sqlite";
     if (clientIDForSync != null)
@@ -490,12 +522,20 @@ Future<void> deleteRecentBackups(context, amountToKeep,
 
     drive.FileList fileList = await driveApi.files.list(
       spaces: 'appDataFolder',
+      orderBy: 'modifiedTime desc',
       $fields: 'files(id, name, modifiedTime, size)',
     );
     List<drive.File>? files = fileList.files;
     if (files == null) {
       throw "No backups found.";
     }
+
+    // Sort descending by modifiedTime so newest backups are strictly preserved
+    files.sort((a, b) {
+      final aTime = a.modifiedTime ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final bTime = b.modifiedTime ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return bTime.compareTo(aTime);
+    });
 
     int index = 0;
     files.forEach((file) {

@@ -40,13 +40,22 @@ Future<String?> importDBFileFromDevice(BuildContext context) async {
 
   await cancelAndPreventSyncOperation();
 
-  if (kIsWeb) {
-    Uint8List fileBytes = result.files.single.bytes!;
-    await overwriteDefaultDB(fileBytes);
-  } else {
-    File file = File(result.files.single.path ?? "");
-    Uint8List fileBytes = await file.readAsBytes();
-    await overwriteDefaultDB(fileBytes);
+  try {
+    if (kIsWeb) {
+      Uint8List fileBytes = result.files.single.bytes!;
+      await overwriteDefaultDB(fileBytes);
+    } else {
+      File file = File(result.files.single.path ?? "");
+      Uint8List fileBytes = await file.readAsBytes();
+      await overwriteDefaultDB(fileBytes);
+    }
+  } catch (e) {
+    openSnackbar(SnackbarMessage(
+      title: "error-importing".tr(),
+      description: e.toString().replaceAll("Exception: ", ""),
+      icon: Icons.error_outline_rounded,
+    ));
+    return null;
   }
   await resetLanguageToSystem(context);
   await updateSettings("databaseJustImported", true,

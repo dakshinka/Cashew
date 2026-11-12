@@ -30,27 +30,24 @@ This backlog synthesizes and tracks findings and recommendations from repository
   - Replaced broken `npm ci` step in `.github/workflows/firebase-hosting-pull-request.yml` with Flutter web build action.
   - Added explicit direct dependencies `uuid` and `collection` in `budget/pubspec.yaml`.
 
+- [x] **Safe Database Restore with Integrity Check (Review 2, Item A)**:
+  - Added SQLite format magic header verification (`isValidSqliteHeader`) before writing any bytes to disk.
+  - Automatically creates a pre-restore backup snapshot (`db.sqlite.pre_restore_backup`) before overwriting.
+  - Safely closes live database executor before replacing the file.
+- [x] **Auto-Backup for Non-Google Accounts (Review 2, Item D)**:
+  - Added `createLocalAutoBackup()` fallback that saves rolling daily local backups into `backups/cashew-auto-<date>.sqlite` with a 7-backup retention limit when not signed into Google.
+- [x] **Google Drive Backup Rotation Order (Review 2, Item E)**:
+  - Added `orderBy: 'modifiedTime desc'` to Google Drive API file listing and in-memory descending sort by `modifiedTime` to ensure the newest backups are always retained.
+
 ---
 
 ## 📋 Open Backlog Items
 
 ### Tier 1 — Data Safety & Restore Integrity (High Priority)
 
-1. **Safe Database Restore with Integrity Check (Review 2, Item A)**
-   - *Issue*: Restoring a backup currently writes bytes directly to `db.sqlite` while SQLite connection is still open. No `PRAGMA integrity_check` or schema version pre-validation.
-   - *Action*: Close existing database executor before overwriting, verify SQLite header/integrity, and compare `user_version` against `schemaVersionGlobal` (46).
-
-2. **Full-Table "Combine / Merge Backup" Support (Review 2, Item C)**
+1. **Full-Table "Combine / Merge Backup" Support (Review 2, Item C)**
    - *Issue*: `_commitCombinedData` in `backupShareManager.dart` only merges wallets, categories, and transactions. Budgets, objectives/goals, and limits are omitted.
    - *Action*: Extend changeset importer to merge all tables, or clearly label in UI as "Merge Accounts & Transactions". Optimize duplicate checking lookup.
-
-3. **Auto-Backup for Non-Google Accounts (Review 2, Item D)**
-   - *Issue*: `createBackupInBackground` hard-exits if `hasSignedIn == false`.
-   - *Action*: For local-only use without Google Drive, enable auto-backup to write periodic snapshot copies into local storage.
-
-4. **Google Drive Backup Rotation Order (Review 2, Item E)**
-   - *Issue*: `deleteRecentBackups` prunes old backups using default Drive API ordering (which is non-deterministic without `orderBy: 'modifiedTime desc'`).
-   - *Action*: Pass explicit sorting by `modifiedTime desc` before trimming to the 20-backup limit.
 
 ---
 
