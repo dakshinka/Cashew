@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
 import 'package:collection/collection.dart';
 import 'package:syncfusion_flutter_pdf/pdf.dart';
+import 'package:uuid/uuid.dart';
 import 'package:budget/colors.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/functions.dart';
@@ -16,6 +17,8 @@ import 'package:budget/struct/settings.dart';
 import 'package:budget/struct/statementImporter/statementModels.dart';
 import 'package:budget/struct/statementImporter/statementParser.dart';
 import 'package:budget/struct/creditCard/creditCardManager.dart';
+import 'package:budget/struct/creditCard/creditCardModels.dart';
+import 'package:budget/struct/smsReview/reviewManager.dart';
 import 'package:budget/struct/categoryManagerHelper.dart';
 import 'package:budget/pages/addTransactionPage.dart';
 import 'package:budget/widgets/button.dart';
@@ -44,6 +47,239 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
   String _filterMode = "all"; // "all", "missing", "reconciled"
   DateTime? _filterStartDate;
   CreditCardStatementSummary? _creditCardSummary;
+  String? _autoMatchNotice;
+  String? _suggestedNewAccountName;
+
+  Future<void> _autoMatchAccountIfPossible(
+    List<StatementEntry> entries,
+    CreditCardStatementSummary? summary,
+    String? fileName,
+  ) async {
+    final wallets = Provider.of<AllWallets>(context, listen: false).list;
+    if (wallets.isEmpty) return;
+
+    // 1. Detect card digits (4-digit identifier)
+    String? detectedDigits = summary?.cardLast4?.trim();
+    if (detectedDigits == null || detectedDigits.isEmpty) {
+      if (fileName != null) {
+        final match =
+            RegExp(r'(?:_|\b)(\d{4})(?:_|\b|\.)').firstMatch(fileName);
+        if (match != null) {
+          detectedDigits = match.group(1);
+        }
+      }
+    }
+
+    // 2. Detect provider / bank name
+    String? detectedProvider = summary?.cardName?.trim();
+    if (detectedProvider == null || detectedProvider.isEmpty) {
+      final nameToCheck = (fileName ?? "").toUpperCase();
+      final knownBanks = [
+        "HDFC",
+        "SBI",
+        "ICICI",
+        "AXIS",
+        "KOTAK",
+        "RBL",
+        "INDUSIND",
+        "AMEX",
+        "CITI",
+        "BOB",
+        "YES BANK",
+        "PNB",
+        "IDFC",
+        "AU BANK",
+        "RUPAY",
+        "VISA",
+        "MASTERCARD"
+      ];
+      for (final b in knownBanks) {
+        if (nameToCheck.contains(b)) {
+          detectedProvider = b;
+          break;
+        }
+      }
+    }
+
+    // 3. Try to match an existing wallet
+    TransactionWallet? matchedWallet;
+
+    // Strategy A: Match by CreditCardConfig.cardLast4
+    if (detectedDigits != null && detectedDigits.isNotEmpty) {
+      for (final w in wallets) {
+        final cfg = CreditCardManager.instance.getConfig(w.walletPk);
+        if (cfg.isEnabled &&
+            cfg.cardLast4 != null &&
+            cfg.cardLast4!.trim() == detectedDigits) {
+          matchedWallet = w;
+          break;
+        }
+      }
+    }
+
+    // Strategy B: Match wallet name containing detectedDigits
+    if (matchedWallet == null &&
+        detectedDigits != null &&
+        detectedDigits.isNotEmpty) {
+      for (final w in wallets) {
+        final wDigits = w.name.replaceAll(RegExp(r'\D'), '');
+        if (wDigits.contains(detectedDigits) ||
+            w.name.contains(detectedDigits)) {
+          if (detectedProvider != null) {
+            final wLower = w.name.toLowerCase();
+            final pLower = detectedProvider.toLowerCase();
+            if (wLower.contains(pLower) || pLower.contains(wLower)) {
+              matchedWallet = w;
+              break;
+            }
+          } else {
+            matchedWallet = w;
+            break;
+          }
+        }
+      }
+    }
+
+    // Strategy C: Match provider name for credit card accounts
+    if (matchedWallet == null &&
+        detectedProvider != null &&
+        detectedProvider.isNotEmpty) {
+      final pLower = detectedProvider.toLowerCase();
+      final matchingWallets = wallets.where((w) {
+        final wLower = w.name.toLowerCase();
+        final cfg = CreditCardManager.instance.getConfig(w.walletPk);
+        final isCredit = cfg.isEnabled ||
+            wLower.contains("credit") ||
+            wLower.contains("card") ||
+            RegExp(r'\bcc\b').hasMatch(wLower);
+        return isCredit && (wLower.contains(pLower) || pLower.contains(wLower));
+      }).toList();
+
+      if (matchingWallets.length == 1) {
+        matchedWallet = matchingWallets.first;
+      }
+    }
+
+    // Strategy D: Match using ReviewManager account resolution
+    if (matchedWallet == null && detectedProvider != null) {
+      matchedWallet =
+          ReviewManager.findMatchingWallet(wallets, detectedProvider);
+    }
+
+    if (matchedWallet != null) {
+      final matched = matchedWallet;
+      setState(() {
+        _selectedWalletPk = matched.walletPk;
+        _suggestedNewAccountName = null;
+        _autoMatchNotice =
+            "Auto-matched to ${matched.name}${detectedDigits != null ? ' (•••• $detectedDigits)' : ''}";
+      });
+      if (entries.isNotEmpty) {
+        for (final e in entries) {
+          e.destinationWalletPk = matched.walletPk;
+        }
+        await StatementParser.checkDuplicates(entries, matched.walletPk);
+        if (mounted) setState(() {});
+      }
+    } else {
+      // No match found: suggest creating a new dedicated account
+      String suggested = "";
+      if (detectedProvider != null && detectedDigits != null) {
+        suggested = "$detectedProvider $detectedDigits";
+      } else if (detectedDigits != null) {
+        suggested = "Credit Card $detectedDigits";
+      } else if (detectedProvider != null) {
+        suggested = "$detectedProvider Card";
+      }
+
+      if (suggested.isNotEmpty) {
+        setState(() {
+          _suggestedNewAccountName = suggested;
+          _autoMatchNotice = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _createSuggestedAccount() async {
+    if (_suggestedNewAccountName == null) return;
+    try {
+      final wallets = Provider.of<AllWallets>(context, listen: false).list;
+      final newWalletPk = const Uuid().v4();
+      final newWallet = TransactionWallet(
+        walletPk: newWalletPk,
+        name: _suggestedNewAccountName!,
+        currency: "inr",
+        dateCreated: DateTime.now(),
+        order: wallets.length,
+        decimals: 2,
+        homePageWidgetDisplay: defaultWalletHomePageWidgetDisplay,
+      );
+      await database.createOrUpdateWallet(newWallet);
+
+      final digitsMatch =
+          RegExp(r'\d{4}').firstMatch(_suggestedNewAccountName!);
+      final last4 = digitsMatch?.group(0) ?? _creditCardSummary?.cardLast4;
+
+      int? calculatedGraceDays;
+      if (_creditCardSummary?.statementDate != null &&
+          _creditCardSummary?.dueDate != null) {
+        final diff = _creditCardSummary!.dueDate!
+            .difference(_creditCardSummary!.statementDate!)
+            .inDays;
+        if (diff >= 5 && diff <= 45) {
+          calculatedGraceDays = diff;
+        }
+      }
+
+      final newConfig = CreditCardConfig(
+        walletPk: newWalletPk,
+        isEnabled: true,
+        cardLast4: last4,
+        creditLimit: _creditCardSummary?.creditLimit ?? 100000.0,
+        availableCreditLimit: _creditCardSummary?.availableCreditLimit,
+        availableCashLimit: _creditCardSummary?.availableCashLimit,
+        lastStatementBalance: _creditCardSummary?.totalAmountDue ?? 0.0,
+        lastStatementMinDue: _creditCardSummary?.minAmountDue ?? 0.0,
+        lastStatementDate: _creditCardSummary?.statementDate,
+        lastPaymentDueDate: _creditCardSummary?.dueDate,
+        lastStatementFinanceCharges: _creditCardSummary?.financeCharges ?? 0.0,
+        lastStatementGst: _creditCardSummary?.gstCharges ?? 0.0,
+        previousStatementDue: _creditCardSummary?.previousStatementDue ?? 0.0,
+        lastStatementPayments: _creditCardSummary?.paymentsReceived ?? 0.0,
+        lastStatementPurchases: _creditCardSummary?.purchasesCurrentCycle ?? 0.0,
+        billingCycleDay: _creditCardSummary?.statementDate?.day ?? 15,
+        gracePeriodDays: calculatedGraceDays ?? 20,
+        billingPeriod: _creditCardSummary?.billingPeriod,
+      );
+      await CreditCardManager.instance.saveConfig(newConfig);
+
+      setState(() {
+        _selectedWalletPk = newWalletPk;
+        _autoMatchNotice =
+            "Created & selected account \"$_suggestedNewAccountName\"";
+        _suggestedNewAccountName = null;
+      });
+
+      if (_parsedEntries.isNotEmpty) {
+        for (final e in _parsedEntries) {
+          e.destinationWalletPk = newWalletPk;
+        }
+        await StatementParser.checkDuplicates(_parsedEntries, newWalletPk);
+        setState(() {});
+      }
+
+      openSnackbar(
+        SnackbarMessage(
+          title: "Account Created",
+          description: "Created and linked account successfully.",
+          icon: Icons.check_circle_outline_rounded,
+        ),
+      );
+    } catch (e) {
+      debugPrint("Error creating suggested account: $e");
+    }
+  }
 
   @override
   void initState() {
@@ -155,12 +391,15 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
         }
       }
 
+      final summary = StatementParser.lastExtractedSummary;
       setState(() {
         _parsedEntries = entries;
-        _creditCardSummary = StatementParser.lastExtractedSummary;
+        _creditCardSummary = summary;
         _isProcessing = false;
         _stageMessage = null;
       });
+
+      await _autoMatchAccountIfPossible(entries, summary, _loadedFileName);
 
       if (entries.isEmpty) {
         openSnackbar(
@@ -193,11 +432,14 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
         targetWalletPk: _selectedWalletPk,
       );
 
+      final summary = StatementParser.lastExtractedSummary;
       setState(() {
         _parsedEntries = entries;
-        _creditCardSummary = StatementParser.lastExtractedSummary;
+        _creditCardSummary = summary;
         _isProcessing = false;
       });
+
+      await _autoMatchAccountIfPossible(entries, summary, _loadedFileName);
 
       if (entries.isEmpty) {
         openSnackbar(
@@ -360,13 +602,17 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                             if (!mounted) return;
                             Navigator.of(sheetContext).pop();
 
+                            final summary =
+                                StatementParser.lastExtractedSummary;
                             setState(() {
                               _parsedEntries = entries;
-                              _creditCardSummary =
-                                  StatementParser.lastExtractedSummary;
+                              _creditCardSummary = summary;
                               _isProcessing = false;
                               _stageMessage = null;
                             });
+
+                            await _autoMatchAccountIfPossible(
+                                entries, summary, _loadedFileName);
 
                             if (entries.isEmpty) {
                               openSnackbar(
@@ -1580,11 +1826,46 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                TextFont(
-                  text: "Target Account",
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  textColor: getColor(context, "textLight"),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    TextFont(
+                      text: "Target Account",
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      textColor: getColor(context, "textLight"),
+                    ),
+                    if (_autoMatchNotice != null)
+                      Flexible(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: Colors.green.withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(
+                                color: Colors.green.withOpacity(0.3)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.check_circle_rounded,
+                                  size: 13, color: Colors.green),
+                              const SizedBox(width: 4),
+                              Flexible(
+                                child: TextFont(
+                                  text: _autoMatchNotice!,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  textColor: Colors.green,
+                                  maxLines: 1,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
                 const SizedBox(height: 8),
                 DropdownButtonHideUnderline(
@@ -1609,8 +1890,14 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                       );
                     }).toList(),
                     onChanged: (val) {
-                      setState(() => _selectedWalletPk = val);
+                      setState(() {
+                        _selectedWalletPk = val;
+                        _autoMatchNotice = null;
+                      });
                       if (_parsedEntries.isNotEmpty && val != null) {
+                        for (final e in _parsedEntries) {
+                          e.destinationWalletPk = val;
+                        }
                         StatementParser.checkDuplicates(_parsedEntries, val)
                             .then((_) {
                           setState(() {});
@@ -1619,6 +1906,65 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                     },
                   ),
                 ),
+                if (_suggestedNewAccountName != null) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .primaryContainer
+                          .withOpacity(0.4),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: Theme.of(context)
+                            .colorScheme
+                            .primary
+                            .withOpacity(0.3),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.add_card_rounded,
+                          color: Theme.of(context).colorScheme.primary,
+                          size: 24,
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              TextFont(
+                                text:
+                                    "New Card Detected: $_suggestedNewAccountName",
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              const SizedBox(height: 2),
+                              TextFont(
+                                text:
+                                    "No matching account found. Create this card account with 1 tap?",
+                                fontSize: 11,
+                                textColor: getColor(context, "textLight"),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Button(
+                          label: "Create",
+                          fontSize: 11,
+                          padding: const EdgeInsetsDirectional.symmetric(
+                              horizontal: 10, vertical: 6),
+                          color: Theme.of(context).colorScheme.primary,
+                          textColor: Theme.of(context).colorScheme.onPrimary,
+                          onTap: _createSuggestedAccount,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

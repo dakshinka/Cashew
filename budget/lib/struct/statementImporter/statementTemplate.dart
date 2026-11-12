@@ -1,8 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import 'package:budget/main.dart';
 import 'package:budget/struct/databaseGlobal.dart';
-import 'package:budget/struct/settings.dart';
 import 'package:budget/struct/statementImporter/statementModels.dart';
 import 'package:budget/struct/statementImporter/statementParser.dart';
 import 'package:budget/struct/smsReview/llmClassifier.dart';
@@ -349,7 +347,7 @@ class StatementTemplateManager {
                 DateTime.now();
             final rawDesc = m.group(2)?.trim() ?? "Transaction";
             final amtStr = m.group(3) ?? "0";
-            final amt = StatementParser.parseAmount(amtStr) ?? 0.0;
+            final amt = StatementParser.parseAmount(amtStr);
             if (amt <= 0) continue;
 
             final upperDesc = rawDesc.toUpperCase();

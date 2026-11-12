@@ -110,6 +110,30 @@ class StatementParser {
       gstCharges = parseAmount(gstMatch.group(1)!);
     }
 
+    String? cardLast4;
+    final cardNoMatch = RegExp(
+      r'(?:card\s*no\.?|card\s*number|credit\s*card\s*no\.?|account\s*no\.?)\s*[:\-]?\s*([0-9xX* ]{10,20})',
+      caseSensitive: false,
+    ).firstMatch(fullText);
+    if (cardNoMatch != null) {
+      final digits = cardNoMatch.group(1)!.replaceAll(RegExp(r'\D'), '');
+      if (digits.length >= 4) {
+        cardLast4 = digits.substring(digits.length - 4);
+      }
+    }
+
+    String? cardName;
+    for (final bank in [
+      "HDFC", "SBI", "ICICI", "AXIS", "KOTAK", "RBL",
+      "INDUSIND", "AMEX", "CITI", "BOB", "YES BANK",
+      "PNB", "IDFC", "AU BANK", "RUPAY"
+    ]) {
+      if (fullText.toUpperCase().contains(bank)) {
+        cardName = "$bank Credit Card";
+        break;
+      }
+    }
+
     final List<String> emis = [];
     final lines = fullText.split('\n');
     for (final l in lines) {
@@ -124,6 +148,8 @@ class StatementParser {
     }
 
     final summary = CreditCardStatementSummary(
+      cardName: cardName,
+      cardLast4: cardLast4,
       statementDate: statementDate,
       dueDate: dueDate,
       totalAmountDue: totalDue,

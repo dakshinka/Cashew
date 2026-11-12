@@ -1,10 +1,8 @@
 import 'dart:convert';
 import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
-import 'package:budget/main.dart';
 import 'package:budget/database/tables.dart';
 import 'package:budget/struct/databaseGlobal.dart';
-import 'package:budget/struct/settings.dart';
 import 'package:budget/struct/creditCard/creditCardModels.dart';
 
 class PayoffSimulationScenario {
@@ -91,9 +89,9 @@ class CreditCardManager extends ChangeNotifier {
         if (!t.paid) continue;
         final tDateOnly =
             DateTime(t.dateCreated.year, t.dateCreated.month, t.dateCreated.day);
-        final isAfterOrOnStmt = !tDateOnly.isBefore(stmtDateOnly);
+        final isPostStatement = tDateOnly.isAfter(stmtDateOnly);
 
-        if (isAfterOrOnStmt) {
+        if (isPostStatement) {
           if (t.income == true) {
             paymentsAfterStmt += t.amount.abs();
           } else {

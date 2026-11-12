@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:budget/database/tables.dart';
 
 class CreditCardConfig {
@@ -280,12 +279,19 @@ class CreditCardAnalysisResult {
     double paymentsAfterStatement = 0.0;
     final List<Transaction> postStatementSpends = [];
 
+    final DateTime stmtDateOnly =
+        DateTime(effStatementDate.year, effStatementDate.month, effStatementDate.day);
+
     for (final t in transactions) {
       if (!t.paid) continue;
       // In Cashew, for an expense account, expense has income == false
       // Repayments have income == true
+      final tDateOnly =
+          DateTime(t.dateCreated.year, t.dateCreated.month, t.dateCreated.day);
+      final bool isPostStatement = tDateOnly.isAfter(stmtDateOnly);
+
       if (t.income == false) {
-        if (t.dateCreated.isBefore(effStatementDate)) {
+        if (!isPostStatement) {
           preStatementSpends += t.amount.abs();
         } else {
           newSpends += t.amount.abs();
@@ -293,7 +299,7 @@ class CreditCardAnalysisResult {
         }
       } else {
         // Payments / Repayments after statement date
-        if (!t.dateCreated.isBefore(effStatementDate)) {
+        if (isPostStatement) {
           paymentsAfterStatement += t.amount.abs();
         }
       }
