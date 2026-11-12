@@ -1316,6 +1316,45 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
         }
       }
 
+      // Automatically synchronize statement baseline, credit limit & cycle to card config
+      if (_creditCardSummary != null && _creditCardSummary!.hasData) {
+        final currentConfig = CreditCardManager.instance.getConfig(walletPk);
+        int? graceDays;
+        if (_creditCardSummary!.statementDate != null &&
+            _creditCardSummary!.dueDate != null) {
+          final diff = _creditCardSummary!.dueDate!
+              .difference(_creditCardSummary!.statementDate!)
+              .inDays;
+          if (diff >= 5 && diff <= 45) {
+            graceDays = diff;
+          }
+        }
+        final updatedConfig = currentConfig.copyWith(
+          isEnabled: true,
+          creditLimit: (_creditCardSummary!.creditLimit != null &&
+                  _creditCardSummary!.creditLimit! > 0)
+              ? _creditCardSummary!.creditLimit!
+              : currentConfig.creditLimit,
+          billingCycleDay: _creditCardSummary!.statementDate != null
+              ? _creditCardSummary!.statementDate!.day
+              : currentConfig.billingCycleDay,
+          gracePeriodDays: graceDays ?? currentConfig.gracePeriodDays,
+          lastStatementBalance: _creditCardSummary!.totalAmountDue ??
+              currentConfig.lastStatementBalance,
+          lastStatementMinDue: _creditCardSummary!.minAmountDue ??
+              currentConfig.lastStatementMinDue,
+          lastStatementDate: _creditCardSummary!.statementDate ??
+              currentConfig.lastStatementDate,
+          lastPaymentDueDate: _creditCardSummary!.dueDate ??
+              currentConfig.lastPaymentDueDate,
+          lastStatementFinanceCharges: _creditCardSummary!.financeCharges ??
+              currentConfig.lastStatementFinanceCharges,
+          lastStatementGst: _creditCardSummary!.gstCharges ??
+              currentConfig.lastStatementGst,
+        );
+        await CreditCardManager.instance.saveConfig(updatedConfig);
+      }
+
       setState(() {
         _parsedEntries.clear();
         _loadedFileName = null;
@@ -2089,6 +2128,10 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                           CreditCardManager.instance.getConfig(wallet.walletPk);
                       if (s.statementDate != null) {
                         config.billingCycleDay = s.statementDate!.day;
+                        config.lastStatementDate = s.statementDate;
+                      }
+                      if (s.dueDate != null) {
+                        config.lastPaymentDueDate = s.dueDate;
                       }
                       if (gracePeriodDays != null &&
                           gracePeriodDays >= 5 &&
@@ -2098,13 +2141,25 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                       if (s.creditLimit != null && s.creditLimit! > 0) {
                         config.creditLimit = s.creditLimit!;
                       }
+                      if (s.totalAmountDue != null) {
+                        config.lastStatementBalance = s.totalAmountDue!;
+                      }
+                      if (s.minAmountDue != null) {
+                        config.lastStatementMinDue = s.minAmountDue!;
+                      }
+                      if (s.financeCharges != null) {
+                        config.lastStatementFinanceCharges = s.financeCharges!;
+                      }
+                      if (s.gstCharges != null) {
+                        config.lastStatementGst = s.gstCharges!;
+                      }
                       config.isEnabled = true;
                       await CreditCardManager.instance.saveConfig(config);
                       openSnackbar(
                         SnackbarMessage(
                           title: "Card Settings Synchronized",
                           description:
-                              "Statement day (${config.billingCycleDay}), grace period (${config.gracePeriodDays} days) updated.",
+                              "Statement baseline (${s.totalAmountDue != null ? '$currency${s.totalAmountDue!.toStringAsFixed(2)}' : 'updated'}), limit, and dates saved.",
                           icon: Icons.check_circle_rounded,
                         ),
                       );
@@ -2189,6 +2244,25 @@ class _StatementImporterPageState extends State<StatementImporterPage> {
                         ),
                       ],
                     ),
+                ],
+              ),
+            ],
+            if (s.creditLimit != null && s.creditLimit! > 0) ...[
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  TextFont(
+                    text: "Card Credit Limit:",
+                    fontSize: 12,
+                    textColor: getColor(context, "textLight"),
+                  ),
+                  TextFont(
+                    text: "$currency${s.creditLimit!.toStringAsFixed(0)}",
+                    fontSize: 13,
+                    fontWeight: FontWeight.bold,
+                    textColor: Theme.of(context).colorScheme.primary,
+                  ),
                 ],
               ),
             ],

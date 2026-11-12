@@ -74,8 +74,39 @@ class CreditCardManager extends ChangeNotifier {
     return false;
   }
 
-  /// Calculates outstanding card balance (spends minus payments)
-  static double calculateWalletBalance(List<Transaction> transactions) {
+  /// Calculates outstanding card balance (statement baseline + new spends minus payments)
+  static double calculateWalletBalance(
+    List<Transaction> transactions, {
+    CreditCardConfig? config,
+  }) {
+    if (config != null && config.lastStatementBalance > 0) {
+      final stmtDate =
+          config.lastStatementDate ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final stmtDateOnly =
+          DateTime(stmtDate.year, stmtDate.month, stmtDate.day);
+      double paymentsAfterStmt = 0.0;
+      double spendsAfterStmt = 0.0;
+
+      for (final t in transactions) {
+        if (!t.paid) continue;
+        final tDateOnly =
+            DateTime(t.dateCreated.year, t.dateCreated.month, t.dateCreated.day);
+        final isAfterOrOnStmt = !tDateOnly.isBefore(stmtDateOnly);
+
+        if (isAfterOrOnStmt) {
+          if (t.income == true) {
+            paymentsAfterStmt += t.amount.abs();
+          } else {
+            spendsAfterStmt += t.amount.abs();
+          }
+        }
+      }
+
+      final remainingStmt =
+          (config.lastStatementBalance - paymentsAfterStmt).clamp(0.0, double.infinity);
+      return remainingStmt + spendsAfterStmt;
+    }
+
     double totalSpends = 0.0;
     double totalRepayments = 0.0;
     for (final t in transactions) {
@@ -123,7 +154,8 @@ class CreditCardManager extends ChangeNotifier {
     // 1. Primary Card
     final primaryTxns =
         await database.getAllTransactionsFromWallet(primaryPk);
-    final primaryBal = calculateWalletBalance(primaryTxns);
+    final primaryBal =
+        calculateWalletBalance(primaryTxns, config: primaryConfig);
     totalCombinedSpent += primaryBal;
     members.add(CreditCardMemberInfo(
       wallet: primaryWallet,
@@ -135,13 +167,14 @@ class CreditCardManager extends ChangeNotifier {
     // 2. Linked Cards
     for (final lw in linkedWallets) {
       final txns = await database.getAllTransactionsFromWallet(lw.walletPk);
-      final bal = calculateWalletBalance(txns);
+      final lConfig = getConfig(lw.walletPk);
+      final bal = calculateWalletBalance(txns, config: lConfig);
       totalCombinedSpent += bal;
       members.add(CreditCardMemberInfo(
         wallet: lw,
         currentBalance: bal,
         isPrimary: false,
-        config: getConfig(lw.walletPk),
+        config: lConfig,
       ));
     }
 

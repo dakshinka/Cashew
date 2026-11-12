@@ -52,6 +52,14 @@ class _CreditCardTrackerPageState extends State<CreditCardTrackerPage> {
 
     final limitController =
         TextEditingController(text: _config.creditLimit.toStringAsFixed(0));
+    final stmtBalanceController = TextEditingController(
+        text: _config.lastStatementBalance > 0
+            ? _config.lastStatementBalance.toStringAsFixed(2)
+            : "");
+    final stmtMinDueController = TextEditingController(
+        text: _config.lastStatementMinDue > 0
+            ? _config.lastStatementMinDue.toStringAsFixed(2)
+            : "");
     final cycleDayController =
         TextEditingController(text: _config.billingCycleDay.toString());
     final graceDaysController =
@@ -76,6 +84,10 @@ class _CreditCardTrackerPageState extends State<CreditCardTrackerPage> {
       onSubmit: () async {
         _config.creditLimit =
             double.tryParse(limitController.text.trim()) ?? 100000.0;
+        _config.lastStatementBalance =
+            double.tryParse(stmtBalanceController.text.trim()) ?? 0.0;
+        _config.lastStatementMinDue =
+            double.tryParse(stmtMinDueController.text.trim()) ?? 0.0;
         _config.billingCycleDay =
             int.tryParse(cycleDayController.text.trim())?.clamp(1, 31) ?? 15;
         _config.gracePeriodDays =
@@ -252,6 +264,42 @@ class _CreditCardTrackerPageState extends State<CreditCardTrackerPage> {
                       child: TextInput(
                         labelText: "Grace Period (Days)",
                         controller: graceDaysController,
+                        numbersOnly: true,
+                        padding: const EdgeInsetsDirectional.only(bottom: 10),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                TextFont(
+                  text: "Statement Baseline",
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.bold,
+                  textColor: getColor(context, "textLight"),
+                ),
+                const SizedBox(height: 2),
+                TextFont(
+                  text:
+                      "Auto-captured from official statements, or enter manually to anchor your balance:",
+                  fontSize: 10.5,
+                  textColor: getColor(context, "textLight"),
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextInput(
+                        labelText: "Last Billed Balance",
+                        controller: stmtBalanceController,
+                        numbersOnly: true,
+                        padding: const EdgeInsetsDirectional.only(bottom: 10),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextInput(
+                        labelText: "Last Min Due",
+                        controller: stmtMinDueController,
                         numbersOnly: true,
                         padding: const EdgeInsetsDirectional.only(bottom: 10),
                       ),
@@ -607,6 +655,192 @@ class _CreditCardTrackerPageState extends State<CreditCardTrackerPage> {
                   ),
                 );
               },
+            ),
+
+            // Statement Reconciliation & Settlement Breakdown Card
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: analysis.isStatementPaidInFull
+                      ? Colors.green.withOpacity(0.06)
+                      : (analysis.statementBalance > 0 && !analysis.isGracePeriodActive
+                          ? Colors.red.withOpacity(0.06)
+                          : theme.colorScheme.surface),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(
+                    color: analysis.isStatementPaidInFull
+                        ? Colors.green.withOpacity(0.3)
+                        : (analysis.statementBalance > 0 && !analysis.isGracePeriodActive
+                            ? Colors.red.withOpacity(0.3)
+                            : theme.colorScheme.outlineVariant.withOpacity(0.5)),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              analysis.isStatementPaidInFull
+                                  ? Icons.verified_rounded
+                                  : Icons.receipt_long_rounded,
+                              size: 20,
+                              color: analysis.isStatementPaidInFull
+                                  ? Colors.green.shade700
+                                  : theme.colorScheme.primary,
+                            ),
+                            const SizedBox(width: 8),
+                            TextFont(
+                              text: "Statement Baseline & Settle",
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ],
+                        ),
+                        if (analysis.statementBalance > 0)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: analysis.isStatementPaidInFull
+                                  ? Colors.green.withOpacity(0.15)
+                                  : (analysis.isGracePeriodActive
+                                      ? Colors.amber.withOpacity(0.2)
+                                      : Colors.red.withOpacity(0.15)),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: TextFont(
+                              text: analysis.isStatementPaidInFull
+                                  ? "✓ Paid in Full (0% APR)"
+                                  : (analysis.isGracePeriodActive
+                                      ? "Due: ${analysis.paymentDueDate.day}/${analysis.paymentDueDate.month}"
+                                      : "Overdue (Interest Active)"),
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              textColor: analysis.isStatementPaidInFull
+                                  ? Colors.green.shade800
+                                  : (analysis.isGracePeriodActive
+                                      ? Colors.amber.shade900
+                                      : Colors.red.shade800),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    if (analysis.statementBalance > 0) ...[
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          TextFont(
+                            text:
+                                "Billed Statement Balance (${analysis.statementDate.day}/${analysis.statementDate.month}/${analysis.statementDate.year}):",
+                            fontSize: 12.5,
+                            textColor: getColor(context, "textLight"),
+                          ),
+                          TextFont(
+                            text: getCurrencyString(analysis.statementBalance),
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 5),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          TextFont(
+                            text: "Repayments Since Statement:",
+                            fontSize: 12.5,
+                            textColor: Colors.green.shade800,
+                          ),
+                          TextFont(
+                            text:
+                                "- ${getCurrencyString(analysis.amountPaidSinceStatement)}",
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            textColor: Colors.green.shade800,
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 5),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          TextFont(
+                            text: "Statement Balance Remaining:",
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                            textColor: analysis.statementBalanceRemaining > 0
+                                ? Colors.red.shade800
+                                : getColor(context, "textLight"),
+                          ),
+                          TextFont(
+                            text: getCurrencyString(
+                                analysis.statementBalanceRemaining),
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            textColor: analysis.statementBalanceRemaining > 0
+                                ? Colors.red.shade800
+                                : Colors.green.shade800,
+                          ),
+                        ],
+                      ),
+                      if (analysis.newSpendsSinceStatement > 0) ...[
+                        const SizedBox(height: 5),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            TextFont(
+                              text: "New Spends (Since Statement):",
+                              fontSize: 12.5,
+                              textColor: getColor(context, "textLight"),
+                            ),
+                            TextFont(
+                              text:
+                                  "+ ${getCurrencyString(analysis.newSpendsSinceStatement)}",
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ],
+                        ),
+                      ],
+                      if (analysis.totalFinanceCharges > 0) ...[
+                        const SizedBox(height: 5),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            TextFont(
+                              text: "Accrued Finance Fees & Taxes:",
+                              fontSize: 12.5,
+                              textColor: Colors.red.shade700,
+                            ),
+                            TextFont(
+                              text:
+                                  "+ ${getCurrencyString(analysis.totalFinanceCharges)}",
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              textColor: Colors.red.shade700,
+                            ),
+                          ],
+                        ),
+                      ],
+                    ] else ...[
+                      TextFont(
+                        text:
+                            "No statement baseline linked yet. Upload an XLS/PDF card statement to automatically track your statement dues, repayments, remaining minimum due, and 0% grace period.",
+                        fontSize: 12,
+                        textColor: getColor(context, "textLight"),
+                        maxLines: 3,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
             ),
 
             // Live Daily Accrual & Balance Card
