@@ -1168,6 +1168,29 @@ class FinanceDatabase extends _$FinanceDatabase {
         );
       },
       beforeOpen: (details) async {
+        // Enforce SQLite foreign key constraints
+        try {
+          await customStatement('PRAGMA foreign_keys = ON;');
+        } catch (_) {}
+
+        // Ensure performance indexes exist (safe, idempotent, zero table-scan penalty)
+        try {
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_transactions_wallet_date ON transactions (wallet_fk, date_created);',
+          );
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_transactions_modified ON transactions (date_time_modified);',
+          );
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_transactions_category ON transactions (category_fk);',
+          );
+          await customStatement(
+            'CREATE INDEX IF NOT EXISTS idx_category_budget_limits ON category_budget_limits (budget_fk, category_fk);',
+          );
+        } catch (e) {
+          debugPrint("Notice: could not create performance indexes: $e");
+        }
+
         // This code exists because migration 42to43 may have not run correctly...
         // See explanation in 41to42
         try {

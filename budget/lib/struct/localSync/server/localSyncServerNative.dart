@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
-import 'package:budget/database/tables.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/localSync/localSyncEngine.dart';
 import 'package:budget/struct/settings.dart';
@@ -108,9 +108,19 @@ class LocalSyncServerImplementation {
     // 1. Authentication Security Verification
     final expectedToken = getOrGenerateSecurityToken();
     final providedToken = request.headers.value("X-Sync-Token") ??
-        request.uri.queryParameters["token"];
+        request.headers.value("Authorization")?.replaceFirst("Bearer ", "").trim();
 
-    if (providedToken == null || providedToken != expectedToken) {
+    // Constant-time compare to mitigate timing attacks
+    bool tokensMatch = false;
+    if (providedToken != null && providedToken.length == expectedToken.length) {
+      int diff = 0;
+      for (int i = 0; i < expectedToken.length; i++) {
+        diff |= expectedToken.codeUnitAt(i) ^ providedToken.codeUnitAt(i);
+      }
+      tokensMatch = (diff == 0);
+    }
+
+    if (!tokensMatch) {
       request.response.statusCode = HttpStatus.unauthorized;
       request.response.headers.contentType = ContentType.json;
       request.response.write(jsonEncode({
@@ -121,13 +131,22 @@ class LocalSyncServerImplementation {
       return;
     }
 
-    // 2. Payload Size Protection (Anti-DoS / Anti-Memory exhaustion)
-    if (request.contentLength > 25 * 1024 * 1024) {
-      request.response.statusCode = HttpStatus.requestEntityTooLarge;
-      request.response.write("Payload exceeds 25 MB security limit");
-      await request.response.close();
-      return;
+    // 2. Payload Stream Reading with Strict 25 MB Limit (protects chunked transfers)
+    final bytesBuilder = BytesBuilder(copy: false);
+    int receivedBytes = 0;
+    const maxPayload = 25 * 1024 * 1024; // 25 MB
+
+    await for (final chunk in request) {
+      receivedBytes += chunk.length;
+      if (receivedBytes > maxPayload) {
+        request.response.statusCode = HttpStatus.requestEntityTooLarge;
+        request.response.write("Payload exceeds 25 MB security limit");
+        await request.response.close();
+        return;
+      }
+      bytesBuilder.add(chunk);
     }
+    final bodyStr = utf8.decode(bytesBuilder.takeBytes());
 
     final path = request.uri.path;
     try {
@@ -144,7 +163,6 @@ class LocalSyncServerImplementation {
           ..headers.contentType = ContentType.json
           ..write(jsonEncode(status));
       } else if (path == "/api/sync" && request.method == "POST") {
-        final bodyStr = await utf8.decoder.bind(request).join();
         final bodyJson = jsonDecode(bodyStr) as Map<String, dynamic>;
 
         final clientLastSyncedStr = bodyJson['lastSyncedUtc'] as String?;

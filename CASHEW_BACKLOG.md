@@ -48,30 +48,24 @@ This backlog synthesizes and tracks findings and recommendations from repository
   - Added on-demand `PRAGMA integrity_check` and database size monitor.
   - Added live row counts viewer for transactions, wallets, categories, budgets, and delete logs.
 
+- [x] **Database Performance Indexing & Foreign Keys (Review 1, Item 3)**:
+  - Enabled SQLite foreign key constraints via `PRAGMA foreign_keys = ON;`.
+  - Added idempotent SQLite indexes in `beforeOpen` on `transactions (wallet_fk, date_created)`, `transactions (date_time_modified)`, `transactions (category_fk)`, and `category_budget_limits (budget_fk, category_fk)`.
+- [x] **Local-Sync Conflict Resolution (LWW) & Server Hardening (Review 1, Item 2 & Review 2, Item I)**:
+  - Implemented true Last-Write-Wins (LWW) on incoming sync entities by pre-fetching and comparing `dateTimeModified` timestamps, preventing older packets from overwriting newer offline edits.
+  - Tracked and reported accurate `inserted`, `updated`, and `skipped` counts.
+  - Hardened local sync server against timing attacks with constant-time token comparison, stopped accepting tokens in URL query strings, and protected chunked payloads with running byte counters up to 25 MB.
+
 ---
 
 ## 📋 Open Backlog Items
 
-### Tier 2 — Performance & Architecture (Medium Priority)
-
-1. **Database Query Indexing (Review 1, Item 3)**
-   - *Issue*: Tables have no index annotations; queries scan all rows.
-   - *Action*: Add `@TableIndex` on `transactions(walletFk, dateCreated)`, `transactions(dateTimeModified)`, and `category_budget_limits(budgetFk, categoryFk)`. (Requires schema version bump to 47 + drift build_runner).
-
-2. **Local-Sync Conflict Resolution (Review 1, Item 2)**
-   - *Issue*: Sync insertion uses `insertOrReplace` regardless of `dateTimeModified` timestamps.
-   - *Action*: Implement Last-Write-Wins comparison on `dateTimeModified` for incoming records. Add token rate-limiting.
-
-3. **Local-Sync HTTP Server Exposure (Review 1, Item 2 & Review 2, Item I)**
-   - *Issue*: Local sync starts HTTP server on `0.0.0.0:8765` with a 6-digit PIN.
-   - *Action*: Bind to local host / LAN interface, enforce longer token, and keep disabled when not actively in use.
-
----
-
 ### Tier 3 — Enhancements & Maintenance (Low / Optional)
 
-8. **Diagnostic Maintenance Tools in Debug Page (Review 2, Item L)**
-   - Add DB row count monitor (`transactions`, `deleteLogs`, `scannerTemplates`).
-   - Add on-demand `PRAGMA integrity_check` button.
-9. **UI Internationalization Sweep for Fork Screens (Review 1, Item 9)**
+1. **Config-as-Code Cleanups (Review 1, Item 5 & Review 2, Item J)**
+   - Expose explicit `const bool kUnlockAllPro = true;` flag in `main.dart`.
+2. **Pure Function Unit Tests (Review 1, Item 8)**
+   - Add unit tests for `statementParser.dart` (`parseAmount`, date parsing) and `reviewManager.dart`.
+3. **UI Internationalization Sweep for Fork Screens (Review 1, Item 9)**
+   - Add `.tr()` localization tags to `statementImporterPage`, `reviewInboxPage`, and `creditCardTrackerPage`.
    - Add `.tr()` localization tags to `statementImporterPage`, `reviewInboxPage`, and `creditCardTrackerPage`.

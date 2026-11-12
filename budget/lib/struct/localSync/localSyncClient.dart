@@ -2,10 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'package:budget/database/tables.dart';
 import 'package:budget/struct/databaseGlobal.dart';
 import 'package:budget/struct/localSync/localSyncEngine.dart';
-import 'package:budget/struct/settings.dart';
 
 String safeJsonEncode(dynamic object) {
   return jsonEncode(object, toEncodable: (nonEncodable) {
@@ -159,10 +157,6 @@ class LocalSyncClient {
       port = int.tryParse(parts[1]) ?? defaultPort;
     }
     return (host, port);
-  }
-
-  static String _cleanHost(String input) {
-    return parseHostAndPort(input).$1;
   }
 
   static String? extractTokenFromInput(String input) {

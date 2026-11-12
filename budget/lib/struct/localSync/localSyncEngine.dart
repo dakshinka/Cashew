@@ -1,7 +1,5 @@
-import 'dart:convert';
 import 'package:drift/drift.dart' hide Column;
 import 'package:budget/database/tables.dart';
-import 'package:budget/struct/databaseGlobal.dart';
 
 class SyncValueSerializer extends ValueSerializer {
   const SyncValueSerializer();
@@ -297,35 +295,102 @@ class LocalSyncEngine {
     int deletedCount = 0;
     int skippedCount = 0;
 
+    // Pre-fetch existing timestamps for LWW conflict resolution
+    final incomingTxnPks =
+        changeset.transactions.map((t) => t.transactionPk).toList();
+    final existingTxns = await (db.select(db.transactions)
+          ..where((t) => t.transactionPk.isIn(incomingTxnPks)))
+        .get();
+    final existingTxnMap = {
+      for (final t in existingTxns) t.transactionPk: t.dateTimeModified
+    };
+
+    final incomingWalletPks =
+        changeset.wallets.map((w) => w.walletPk).toList();
+    final existingWallets = await (db.select(db.wallets)
+          ..where((w) => w.walletPk.isIn(incomingWalletPks)))
+        .get();
+    final existingWalletMap = {
+      for (final w in existingWallets) w.walletPk: w.dateTimeModified
+    };
+
+    final incomingCategoryPks =
+        changeset.categories.map((c) => c.categoryPk).toList();
+    final existingCategories = await (db.select(db.categories)
+          ..where((c) => c.categoryPk.isIn(incomingCategoryPks)))
+        .get();
+    final existingCategoryMap = {
+      for (final c in existingCategories) c.categoryPk: c.dateTimeModified
+    };
+
+    final incomingBudgetPks =
+        changeset.budgets.map((b) => b.budgetPk).toList();
+    final existingBudgets = await (db.select(db.budgets)
+          ..where((b) => b.budgetPk.isIn(incomingBudgetPks)))
+        .get();
+    final existingBudgetMap = {
+      for (final b in existingBudgets) b.budgetPk: b.dateTimeModified
+    };
+
     await db.batch((batch) {
       // 1. Wallets
       for (final w in changeset.wallets) {
+        final existingTime = existingWalletMap[w.walletPk];
+        if (existingTime != null) {
+          if (w.dateTimeModified != null &&
+              existingTime.isAfter(w.dateTimeModified!)) {
+            skippedCount++;
+            continue;
+          }
+          updatedCount++;
+        } else {
+          insertedCount++;
+        }
         batch.insert(
           db.wallets,
           w,
           mode: InsertMode.insertOrReplace,
         );
-        insertedCount++;
       }
 
       // 2. Categories
       for (final c in changeset.categories) {
+        final existingTime = existingCategoryMap[c.categoryPk];
+        if (existingTime != null) {
+          if (c.dateTimeModified != null &&
+              existingTime.isAfter(c.dateTimeModified!)) {
+            skippedCount++;
+            continue;
+          }
+          updatedCount++;
+        } else {
+          insertedCount++;
+        }
         batch.insert(
           db.categories,
           c,
           mode: InsertMode.insertOrReplace,
         );
-        insertedCount++;
       }
 
       // 3. Budgets
       for (final b in changeset.budgets) {
+        final existingTime = existingBudgetMap[b.budgetPk];
+        if (existingTime != null) {
+          if (b.dateTimeModified != null &&
+              existingTime.isAfter(b.dateTimeModified!)) {
+            skippedCount++;
+            continue;
+          }
+          updatedCount++;
+        } else {
+          insertedCount++;
+        }
         batch.insert(
           db.budgets,
           b,
           mode: InsertMode.insertOrReplace,
         );
-        insertedCount++;
       }
 
       // 4. Category Budget Limits
@@ -358,14 +423,24 @@ class LocalSyncEngine {
         insertedCount++;
       }
 
-      // 7. Transactions (with idempotent upsert by transactionPk)
+      // 7. Transactions (with Last-Write-Wins check)
       for (final t in changeset.transactions) {
+        final existingTime = existingTxnMap[t.transactionPk];
+        if (existingTime != null) {
+          if (t.dateTimeModified != null &&
+              existingTime.isAfter(t.dateTimeModified!)) {
+            skippedCount++;
+            continue;
+          }
+          updatedCount++;
+        } else {
+          insertedCount++;
+        }
         batch.insert(
           db.transactions,
           t,
           mode: InsertMode.insertOrReplace,
         );
-        insertedCount++;
       }
 
       // 8. DeleteLogs (propagate deletions safely)
@@ -424,7 +499,9 @@ class LocalSyncEngine {
     });
 
     return {
-      'insertedOrUpdated': insertedCount,
+      'inserted': insertedCount,
+      'updated': updatedCount,
+      'insertedOrUpdated': insertedCount + updatedCount,
       'deleted': deletedCount,
       'skipped': skippedCount,
     };
