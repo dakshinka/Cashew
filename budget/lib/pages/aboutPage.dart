@@ -111,44 +111,31 @@ class AboutPageState extends State<AboutPage> {
       Padding(
         padding:
             const EdgeInsetsDirectional.symmetric(horizontal: 15, vertical: 5),
-        child: Tappable(
-          onTap: () {
-            openUrl('mailto:dapperappdeveloper@gmail.com');
-          },
-          onLongPress: () {
-            copyToClipboard("dapperappdeveloper@gmail.com");
-          },
-          color: containerColor,
-          borderRadius: getPlatform() == PlatformOS.isIOS ? 10 : 15,
-          child: Padding(
-            padding: const EdgeInsetsDirectional.symmetric(
-                horizontal: 13, vertical: 15),
-            child: Column(
-              children: [
-                TextFont(
-                  text: "lead-developer".tr(),
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  textAlign: TextAlign.center,
-                  maxLines: 5,
-                ),
-                TextFont(
-                  text: "James",
-                  fontSize: 29,
-                  fontWeight: FontWeight.bold,
-                  textColor: Theme.of(context).colorScheme.onPrimaryContainer,
-                  textAlign: TextAlign.center,
-                  maxLines: 5,
-                ),
-                TextFont(
-                  text: "dapperappdeveloper@gmail.com",
-                  fontSize: 16,
-                  textAlign: TextAlign.center,
-                  maxLines: 5,
-                  textColor: getColor(context, "textLight"),
-                ),
-              ],
-            ),
+        child: Container(
+          decoration: BoxDecoration(
+            color: containerColor,
+            borderRadius: BorderRadius.circular(
+                getPlatform() == PlatformOS.isIOS ? 10 : 15),
+          ),
+          padding: const EdgeInsetsDirectional.symmetric(
+              horizontal: 13, vertical: 15),
+          child: Column(
+            children: [
+              TextFont(
+                text: "Cashew",
+                fontSize: 29,
+                fontWeight: FontWeight.bold,
+                textColor: Theme.of(context).colorScheme.onPrimaryContainer,
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 4),
+              TextFont(
+                text: "Personal Edition",
+                fontSize: 16,
+                textAlign: TextAlign.center,
+                textColor: getColor(context, "textLight"),
+              ),
+            ],
           ),
         ),
       ),
@@ -855,19 +842,9 @@ class AboutLinks extends StatelessWidget {
             _buildTappable(
               context: context,
               isExternalLink: true,
-              onTap: () => openUrl("https://github.com/jameskokoska/Cashew"),
+              onTap: () => openUrl("https://github.com/dakshinka/Cashew"),
               icon: MoreIcons.github,
               text: "app-is-open-source".tr(namedArgs: {"app": globalAppName}),
-            ),
-            const HorizontalBreak(padding: EdgeInsetsDirectional.zero),
-            _buildTappable(
-              context: context,
-              isExternalLink: true,
-              onTap: () => openUrl("https://cashewapp.web.app/faq.html"),
-              icon: appStateSettings["outlinedIcons"]
-                  ? Icons.live_help_outlined
-                  : Icons.live_help_rounded,
-              text: "guide-and-faq".tr(),
             ),
             const HorizontalBreak(padding: EdgeInsetsDirectional.zero),
             _buildTappable(
@@ -899,16 +876,6 @@ class AboutLinks extends StatelessWidget {
                   ? Icons.door_front_door_outlined
                   : Icons.door_front_door_rounded,
               text: "view-app-intro".tr(),
-            ),
-            const HorizontalBreak(padding: EdgeInsetsDirectional.zero),
-            _buildTappable(
-              context: context,
-              isExternalLink: true,
-              onTap: () => openUrl("http://cashewapp.web.app/policy.html"),
-              icon: appStateSettings["outlinedIcons"]
-                  ? Icons.policy_outlined
-                  : Icons.policy_rounded,
-              text: "privacy-policy".tr(),
             ),
             const HorizontalBreak(padding: EdgeInsetsDirectional.zero),
             _buildTappable(
@@ -993,7 +960,7 @@ class AboutDeepLinking extends StatelessWidget {
       title: "deep-linking".tr(),
       showLink: false,
       link:
-          "https://github.com/jameskokoska/Cashew?tab=readme-ov-file#app-links",
+          "https://github.com/dakshinka/Cashew#readme",
       list: [
         "deep-linking-description".tr(),
       ],

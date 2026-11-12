@@ -915,27 +915,7 @@ class _BackupManagementState extends State<BackupManagement> {
               : "overwrite-warning".tr(),
       child: Column(
         children: [
-          widget.isClientSync && kIsWeb == false
-              ? Row(
-                  children: [
-                    Expanded(
-                      child: AboutInfoBox(
-                        title: "web-app".tr(),
-                        link: "https://budget-track.web.app/",
-                        color: appStateSettings["materialYou"]
-                            ? Theme.of(context).colorScheme.secondaryContainer
-                            : getColor(context, "lightDarkAccentHeavyLight"),
-                        padding: EdgeInsetsDirectional.only(
-                          start: 5,
-                          end: 5,
-                          bottom: 10,
-                          top: 5,
-                        ),
-                      ),
-                    ),
-                  ],
-                )
-              : SizedBox.shrink(),
+          const SizedBox.shrink(),
           widget.isManaging && widget.isClientSync == false
               ? SettingsContainerSwitch(
                   enableBorderRadius: true,

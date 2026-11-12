@@ -1257,7 +1257,6 @@ Output strictly JSON:
               headers: {
                 "Content-Type": "application/json",
                 "Authorization": "Bearer $cleanApiKey",
-                "HTTP-Referer": "https://cashewapp.web.app",
                 "X-Title": "Cashew Budget Review",
               },
               body: jsonEncode({

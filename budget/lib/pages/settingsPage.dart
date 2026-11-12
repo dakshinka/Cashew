@@ -102,23 +102,7 @@ class MoreActionsPageState extends State<MoreActionsPage> {
         backButton: false,
         horizontalPaddingConstrained: true,
         actions: [
-          CustomPopupMenuButton(
-            showButtons: true,
-            keepOutFirst: true,
-            items: [
-              if (appStateSettings["showFAQAndHelpLink"] == true)
-                DropdownItemMenu(
-                  id: "open-faq",
-                  label: "faq".tr(),
-                  icon: appStateSettings["outlinedIcons"]
-                      ? Icons.live_help_outlined
-                      : Icons.live_help_rounded,
-                  action: () {
-                    openUrl("https://cashewapp.web.app/faq.html");
-                  },
-                ),
-            ],
-          ),
+          const SizedBox.shrink(),
         ],
         listWidgets: [
           Padding(
@@ -189,7 +173,7 @@ class MorePages extends StatelessWidget {
               //     padding: EdgeInsetsDirectional.symmetric(vertical: 5, horizontal: 4),
               //     child: SettingsContainer(
               //       onTap: () {
-              //         openUrl("https://github.com/jameskokoska/Cashew");
+              //         openUrl("https://github.com/dakshinka/Cashew");
               //       },
               //       title: "open-source".tr(),
               //       icon: MoreIcons.github,

@@ -393,68 +393,6 @@ class TranslationsHelp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Tappable(
-      onTap: () {
-        openUrl('mailto:dapperappdeveloper@gmail.com');
-      },
-      onLongPress: () {
-        copyToClipboard("dapperappdeveloper@gmail.com");
-      },
-      color: backgroundColor ??
-          Theme.of(context).colorScheme.secondaryContainer.withOpacity(0.7),
-      borderRadius: getPlatform() == PlatformOS.isIOS ? 10 : 15,
-      child: Padding(
-        padding:
-            const EdgeInsetsDirectional.symmetric(horizontal: 15, vertical: 12),
-        child: Row(
-          children: [
-            if (showIcon)
-              Padding(
-                padding: const EdgeInsetsDirectional.only(end: 12),
-                child: Icon(
-                  appStateSettings["outlinedIcons"]
-                      ? Icons.connect_without_contact_outlined
-                      : Icons.connect_without_contact_rounded,
-                  color: Theme.of(context).colorScheme.secondary,
-                  size: 31,
-                ),
-              ),
-            Expanded(
-              child: TextFont(
-                text: "",
-                textColor: getColor(context, "black"),
-                textAlign:
-                    showIcon == true ? TextAlign.start : TextAlign.center,
-                richTextSpan: [
-                  TextSpan(
-                    text: "translations-help".tr() + " ",
-                    style: TextStyle(
-                      color: getColor(context, "black"),
-                      fontFamily: appStateSettings["font"],
-                      fontFamilyFallback: ['Inter'],
-                    ),
-                  ),
-                  TextSpan(
-                    text: 'dapperappdeveloper@gmail.com',
-                    style: TextStyle(
-                      decoration: TextDecoration.underline,
-                      decorationStyle: TextDecorationStyle.solid,
-                      decorationColor:
-                          getColor(context, "unPaidOverdue").withOpacity(0.8),
-                      color:
-                          getColor(context, "unPaidOverdue").withOpacity(0.8),
-                      fontFamily: appStateSettings["font"],
-                      fontFamilyFallback: ['Inter'],
-                    ),
-                  ),
-                ],
-                maxLines: 5,
-                fontSize: 13,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+    return const SizedBox.shrink();
   }
 }

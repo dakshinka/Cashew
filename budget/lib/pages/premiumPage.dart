@@ -702,14 +702,6 @@ showHelpRestorePopup(BuildContext context) {
     description: "restore-purchases-help".tr(),
     onCancel: () => popRoute(context),
     onCancelLabel: "close".tr(),
-    onSubmitLabel: "contact".tr(),
-    onSubmit: () async {
-      bool openResult = await openUrl('mailto:dapperappdeveloper@gmail.com');
-      if (openResult == false) copyToClipboard("dapperappdeveloper@gmail.com");
-    },
-    onExtra: () =>
-        openUrl("https://cashewapp.web.app/faq.html#restoring-purchases"),
-    onExtraLabel: "FAQ".tr(),
   );
 }
 
@@ -1419,10 +1411,7 @@ class PremiumBanner extends StatelessWidget {
             color: Colors.transparent,
             borderRadius: borderRadius,
             onTap: () {
-              if (kIsWeb)
-                openUrl("https://ko-fi.com/dapperappdeveloper");
-              else
-                openContainer();
+              openContainer();
             },
             child: ClipRRect(
               borderRadius: BorderRadiusDirectional.circular(15),
